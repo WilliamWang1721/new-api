@@ -108,6 +108,7 @@ export type HostingSessionPayload = {
   entries: HostingSessionEntry[]
   session_id: string
   last_compact_summary: string
+  token_occupancy?: number
 }
 
 export type HostingStatus = {

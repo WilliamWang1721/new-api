@@ -428,6 +428,12 @@ export function HostingPage() {
                         <CardTitle>{hook.name}</CardTitle>
                         <CardDescription>
                           {hook.owner} · {hook.kind} · {hook.wake_mode}
+                          {hook.cooldown_sec
+                            ? ` · ${hook.cooldown_sec} ${t('seconds')}`
+                            : ''}
+                          {hook.next_fire_at
+                            ? ` · ${new Date(hook.next_fire_at * 1000).toLocaleString()}`
+                            : ''}
                         </CardDescription>
                       </div>
                       <div className='flex items-center gap-2'>
@@ -514,9 +520,22 @@ export function HostingPage() {
                       {t('Export session')}
                     </Button>
                     <span className='text-muted-foreground text-sm'>
-                      {t('Today')}: {costQuery.data?.data?.tokens_used ?? 0}{' '}
-                      {t('tokens')} / {costQuery.data?.data?.wakes ?? 0}{' '}
+                      {t('Today')}: {costQuery.data?.data?.tokens_used ?? 0} /{' '}
+                      {costQuery.data?.data?.daily_token_budget ??
+                        selectedAgent?.daily_token_budget ??
+                        0}{' '}
+                      {t('tokens')} · {costQuery.data?.data?.wakes ?? 0} /{' '}
+                      {costQuery.data?.data?.max_wakes_per_hour ??
+                        selectedAgent?.max_wakes_per_hour ??
+                        0}{' '}
                       {t('wakes')}
+                      {sessionPayload?.token_occupancy != null ? (
+                        <>
+                          {' '}
+                          · {t('Session')}: {sessionPayload.token_occupancy}{' '}
+                          {t('tokens')}
+                        </>
+                      ) : null}
                     </span>
                   </div>
                   {(tokensQuery.data?.data ?? []).length > 0 ? (

@@ -106,16 +106,24 @@ func CostSnapshot(agentId int) map[string]any {
 	day := time.Now().Format("2006-01-02")
 	used := 0
 	wakes := 0
+	budget := 0
+	maxWakes := 0
 	if agentId > 0 {
 		if row, err := model.GetHostingBrainUsage(agentId, day); err == nil {
 			used = row.PromptTokens + row.OutputTokens
 			wakes = row.WakeCount
 		}
+		if agent, err := model.GetHostingAgentById(agentId); err == nil && agent != nil {
+			budget = agent.DailyTokenBudget
+			maxWakes = agent.MaxWakesPerHour
+		}
 	}
 	return map[string]any{
-		"day":         day,
-		"tokens_used": used,
-		"wakes":       wakes,
-		"agent_id":    agentId,
+		"day":                day,
+		"tokens_used":        used,
+		"wakes":              wakes,
+		"agent_id":           agentId,
+		"daily_token_budget": budget,
+		"max_wakes_per_hour": maxWakes,
 	}
 }

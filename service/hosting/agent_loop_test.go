@@ -193,3 +193,17 @@ func TestDispatchNotifyOnlyHandsOffWithoutBrain(t *testing.T) {
 	require.NotEmpty(t, items)
 	assert.Contains(t, items[0].HandoffReason, "notify_only")
 }
+
+func TestCostSnapshotIncludesBudget(t *testing.T) {
+	setupHostingDB(t)
+	agent := seedAgent(t, func(a *model.HostingAgent) {
+		a.DailyTokenBudget = 12345
+		a.MaxWakesPerHour = 7
+	})
+	require.NoError(t, model.AddHostingBrainUsage(agent.Id, 10, 5, 2, 0))
+	snap := CostSnapshot(agent.Id)
+	assert.Equal(t, 15, snap["tokens_used"])
+	assert.Equal(t, 2, snap["wakes"])
+	assert.Equal(t, 12345, snap["daily_token_budget"])
+	assert.Equal(t, 7, snap["max_wakes_per_hour"])
+}

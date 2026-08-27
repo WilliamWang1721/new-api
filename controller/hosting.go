@@ -314,10 +314,15 @@ func GetHostingSession(c *gin.Context) {
 			sessionId = agent.SessionId
 		}
 	}
+	tokenOccupancy := 0
+	if sessionId != "" {
+		tokenOccupancy, _ = model.CountHostingSessionTokens(id, sessionId)
+	}
 	common.ApiSuccess(c, gin.H{
 		"entries":              entries,
 		"session_id":           sessionId,
 		"last_compact_summary": summary,
+		"token_occupancy":      tokenOccupancy,
 	})
 }
 

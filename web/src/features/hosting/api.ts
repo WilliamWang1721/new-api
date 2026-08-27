@@ -190,7 +190,13 @@ export async function exportHostingSession(id: number) {
 
 export async function getHostingCost(id: number) {
   const res = await api.get<
-    HostingApiResponse<{ tokens_used: number; wakes: number; day: string }>
+    HostingApiResponse<{
+      tokens_used: number
+      wakes: number
+      day: string
+      daily_token_budget?: number
+      max_wakes_per_hour?: number
+    }>
   >(`/api/hosting/admin/agents/${id}/cost`)
   return res.data
 }
