@@ -70,15 +70,29 @@ func ResolveIncident(id int, status string) (*model.HostingIncident, error) {
 }
 
 func notifyHandoff(agent *model.HostingAgent, summary, reason string) {
+	defer func() { _ = recover() }()
+	if agent == nil || model.DB == nil {
+		return
+	}
 	subject := fmt.Sprintf("Hosting handoff: %s", agent.Name)
 	content := fmt.Sprintf("Agent %s (#%d) handed off an incident.\nBrain: %s\nReason: %s\nSummary: %s", agent.Name, agent.Id, agent.BrainSource, reason, summary)
 	userId := agent.HandoffUserId
 	if userId <= 0 {
+		root := model.GetRootUser()
+		if root == nil || root.Id <= 0 {
+			common.SysLog("hosting handoff: no root user to notify")
+			return
+		}
 		service.NotifyRootUser(dto.NotifyTypeHostingHandoff, subject, content)
 		return
 	}
 	user, err := model.GetUserById(userId, false)
 	if err != nil {
+		root := model.GetRootUser()
+		if root == nil || root.Id <= 0 {
+			common.SysLog("hosting handoff: assignee missing and no root user to notify")
+			return
+		}
 		service.NotifyRootUser(dto.NotifyTypeHostingHandoff, subject, content)
 		return
 	}

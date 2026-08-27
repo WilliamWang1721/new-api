@@ -142,16 +142,10 @@ func ParseExtraHeaders(raw string) map[string]string {
 	return out
 }
 
-func postChatCompletions(baseURL, apiKey string, extra map[string]string, timeoutSec int, req BrainRequest) (*BrainResponse, error) {
-	if baseURL == "" {
-		return nil, fmt.Errorf("brain base URL is empty")
-	}
-	if apiKey == "" {
-		return nil, fmt.Errorf("brain API key is empty")
-	}
-	if req.Model == "" {
-		return nil, fmt.Errorf("brain model is empty")
-	}
+// BrainCompletionPayload is the OpenAI-compatible chat body sent to dedicated
+// upstreams and through the internal relay. Compaction sets PromptCacheOff so
+// the request does not persist a prompt-cache write.
+func BrainCompletionPayload(req BrainRequest) map[string]any {
 	body := map[string]any{
 		"model":    req.Model,
 		"messages": req.Messages,
@@ -162,7 +156,23 @@ func postChatCompletions(baseURL, apiKey string, extra map[string]string, timeou
 	if req.MaxTokens != nil {
 		body["max_tokens"] = *req.MaxTokens
 	}
-	payload, err := common.Marshal(body)
+	if req.PromptCacheOff {
+		body["store"] = false
+	}
+	return body
+}
+
+func postChatCompletions(baseURL, apiKey string, extra map[string]string, timeoutSec int, req BrainRequest) (*BrainResponse, error) {
+	if baseURL == "" {
+		return nil, fmt.Errorf("brain base URL is empty")
+	}
+	if apiKey == "" {
+		return nil, fmt.Errorf("brain API key is empty")
+	}
+	if req.Model == "" {
+		return nil, fmt.Errorf("brain model is empty")
+	}
+	payload, err := common.Marshal(BrainCompletionPayload(req))
 	if err != nil {
 		return nil, err
 	}

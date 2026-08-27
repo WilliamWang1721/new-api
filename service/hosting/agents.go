@@ -318,6 +318,7 @@ func insertAgentUser(tx *gorm.DB, name string) (*model.User, error) {
 		AccountKind: constant.AccountKindAgent,
 		Group:       "default",
 		Quota:       0,
+		AffCode:     common.GetRandomString(8),
 	}
 	if err := tx.Create(user).Error; err != nil {
 		return nil, err

@@ -35,7 +35,7 @@ func RelayHostingBrain(agent *model.HostingAgent, req hosting.BrainRequest) (*ho
 		return nil, fmt.Errorf("brain model is empty")
 	}
 
-	payload, err := common.Marshal(req)
+	payload, err := common.Marshal(hosting.BrainCompletionPayload(req))
 	if err != nil {
 		return nil, err
 	}
