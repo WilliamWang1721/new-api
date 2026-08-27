@@ -52,4 +52,40 @@ const (
 	DefaultHostingMaxActions    = 20
 	DefaultHostingMaxAgentHooks = 20
 	DefaultHostingMinHookSec    = 300
+
+	DefaultHostingStewardName = "AI Steward"
+
+	HostingPresetWatch   = "watch"
+	HostingPresetOperate = "operate"
+	HostingPresetFull    = "full"
+
+	HostingAutoReviewOff          = "off"
+	HostingAutoReviewConservative = "conservative"
+	HostingAutoReviewBalanced     = "balanced"
+	HostingAutoReviewAggressive   = "aggressive"
+
+	HostingBriefingOff       = "off"
+	HostingBriefingEveryOpen = "every_open"
+	HostingBriefingDaily     = "daily"
+
+	HostingApprovalPending      = "pending"
+	HostingApprovalAutoApproved = "auto_approved"
+	HostingApprovalApproved     = "approved"
+	HostingApprovalDenied       = "denied"
+	HostingApprovalExecuted     = "executed"
+
+	HostingApprovalToolAction     = "tool_action"
+	HostingApprovalUserPermission = "user_permission"
+
+	HostingToolRiskRead   = "read"
+	HostingToolRiskLow    = "low"
+	HostingToolRiskMedium = "medium"
+	HostingToolRiskHigh   = "high"
+
+	MaxHostingChatMessageRunes  = 4000
+	MaxHostingQuotaGrant        = 10_000_000
+	MaxHostingAutoQuotaGrant    = 100_000
+	MaxHostingOptionValueRunes  = 100_000
+	HostingBriefingEveryOpenSec = 600
+	HostingBriefingDailySec     = 86400
 )

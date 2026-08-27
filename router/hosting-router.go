@@ -13,6 +13,8 @@ func registerHostingRoutes(apiRouter *gin.RouterGroup) {
 	{
 		admin.GET("/status", controller.GetHostingStatus)
 		admin.PUT("/enabled", controller.SetHostingPanelEnabled)
+		admin.GET("/steward", controller.GetStewardSettings)
+		admin.PUT("/steward", controller.UpdateStewardSettings)
 		admin.GET("/agents", controller.GetHostingAgents)
 		admin.GET("/agents/:id", controller.GetHostingAgent)
 		admin.POST("/agents", controller.CreateHostingAgent)
@@ -39,6 +41,18 @@ func registerHostingRoutes(apiRouter *gin.RouterGroup) {
 
 	if !hosting.EnvEnabled() {
 		return
+	}
+
+	steward := apiRouter.Group("/hosting/steward")
+	steward.Use(middleware.UserAuth())
+	{
+		steward.GET("/status", controller.GetStewardStatus)
+		steward.GET("/session", controller.GetStewardSession)
+		steward.POST("/session/rotate", controller.RotateStewardSession)
+		steward.POST("/chat", controller.PostStewardChat)
+		steward.GET("/approvals", controller.GetStewardApprovals)
+		steward.POST("/approvals/:id/decide", middleware.AdminAuth(), controller.DecideStewardApproval)
+		steward.GET("/briefing", controller.GetStewardBriefing)
 	}
 
 	agent := apiRouter.Group("/hosting")

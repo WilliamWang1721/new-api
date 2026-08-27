@@ -48,7 +48,7 @@ export function useAuthRedirect() {
     }
 
     const targetPath =
-      sanitizeAuthRedirect(redirectTo, window.location.origin) ?? '/dashboard'
+      sanitizeAuthRedirect(redirectTo, window.location.origin) ?? '/steward'
     navigate({ href: targetPath, replace: true })
   }
 

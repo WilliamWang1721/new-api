@@ -30,6 +30,7 @@ export const STATIC_I18N_KEYS = [
   // Sidebar views (drill-in workspaces)
   'System Settings',
   'Back to Dashboard',
+  'Back to AI Steward',
   'Auto-disable rules',
   'Channel health checks',
   'Request retry',

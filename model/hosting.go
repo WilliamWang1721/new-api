@@ -8,6 +8,7 @@ import (
 
 	"github.com/QuantumNous/new-api/common"
 	"github.com/QuantumNous/new-api/constant"
+	"gorm.io/gorm"
 )
 
 type HostingAgent struct {
@@ -40,6 +41,10 @@ type HostingAgent struct {
 	SessionId             string `json:"session_id" gorm:"type:varchar(64);index"`
 	LastCompactSummary    string `json:"last_compact_summary" gorm:"type:text"`
 	Remark                string `json:"remark" gorm:"type:varchar(255)"`
+	PermissionPreset      string `json:"permission_preset" gorm:"type:varchar(32)"`
+	AutoReviewMode        string `json:"auto_review_mode" gorm:"type:varchar(32)"`
+	BriefingMode          string `json:"briefing_mode" gorm:"type:varchar(32)"`
+	IsDefault             bool   `json:"is_default"`
 	CreatedAt             int64  `json:"created_at"`
 	UpdatedAt             int64  `json:"updated_at"`
 }
@@ -84,6 +89,21 @@ func (a *HostingAgent) Normalize() {
 	}
 	if a.DedicatedTimeoutSec <= 0 {
 		a.DedicatedTimeoutSec = 60
+	}
+	switch a.PermissionPreset {
+	case constant.HostingPresetWatch, constant.HostingPresetOperate, constant.HostingPresetFull:
+	default:
+		a.PermissionPreset = constant.HostingPresetOperate
+	}
+	switch a.AutoReviewMode {
+	case constant.HostingAutoReviewOff, constant.HostingAutoReviewConservative, constant.HostingAutoReviewBalanced, constant.HostingAutoReviewAggressive:
+	default:
+		a.AutoReviewMode = constant.HostingAutoReviewBalanced
+	}
+	switch a.BriefingMode {
+	case constant.HostingBriefingOff, constant.HostingBriefingEveryOpen, constant.HostingBriefingDaily:
+	default:
+		a.BriefingMode = constant.HostingBriefingEveryOpen
 	}
 }
 
@@ -173,6 +193,8 @@ func HostingAutoMigrateModels() []any {
 		&HostingIncident{},
 		&HostingSessionEntry{},
 		&HostingBrainUsage{},
+		&HostingApproval{},
+		&HostingChatSession{},
 	}
 }
 
@@ -199,6 +221,33 @@ func ListHostingAgents() ([]*HostingAgent, error) {
 	var agents []*HostingAgent
 	err := DB.Order("id desc").Find(&agents).Error
 	return agents, err
+}
+
+func GetDefaultHostingAgent() (*HostingAgent, error) {
+	var agent HostingAgent
+	err := DB.Where("is_default = ?", true).Order("id asc").First(&agent).Error
+	if err == nil {
+		return &agent, nil
+	}
+	if err := DB.Order("id asc").First(&agent).Error; err != nil {
+		return nil, err
+	}
+	return &agent, nil
+}
+
+func SetDefaultHostingAgent(id int) error {
+	if id <= 0 {
+		return errors.New("agent id is empty")
+	}
+	return DB.Transaction(func(tx *gorm.DB) error {
+		if err := tx.Model(&HostingAgent{}).Where("id <> ?", id).Update("is_default", false).Error; err != nil {
+			return err
+		}
+		return tx.Model(&HostingAgent{}).Where("id = ?", id).Updates(map[string]any{
+			"is_default": true,
+			"updated_at": common.GetTimestamp(),
+		}).Error
+	})
 }
 
 func (a *HostingAgent) Insert() error {

@@ -260,7 +260,8 @@ func TestSetHostingAgentPermissionsStoresAllows(t *testing.T) {
 	assert.False(t, Can(91, common.RoleAdminUser, ChannelSecretView))
 	assert.True(t, Can(91, common.RoleAdminUser, LogRead))
 	assert.True(t, Can(91, common.RoleAdminUser, HostingRead))
-	assert.False(t, Can(91, common.RoleAdminUser, OptionWrite))
+	assert.True(t, Can(91, common.RoleAdminUser, OptionRead))
+	assert.True(t, Can(91, common.RoleAdminUser, OptionWrite))
 
 	require.NoError(t, SetHostingAgentPermissions(91, PermissionsMap{
 		ResourceChannel: {

@@ -146,6 +146,10 @@ func Start() {
 		return
 	}
 
+	if err := EnsureDefaultSteward(); err != nil {
+		common.SysError("hosting failed to ensure default steward: " + err.Error())
+	}
+
 	service.SetHostingEventSink(func(event service.HostingEvent) {
 		defer func() { _ = recover() }()
 		HandleHostingEvent(event)

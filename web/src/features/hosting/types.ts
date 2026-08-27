@@ -49,6 +49,9 @@ export type HostingAgent = {
   session_id: string
   last_compact_summary: string
   remark: string
+  permission_preset?: string
+  auto_review_mode?: string
+  is_default?: boolean
   dedicated_key_set: boolean
   permissions: AdminPermissionMatrix
   token_prefixes: string[]
