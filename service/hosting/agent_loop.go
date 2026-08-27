@@ -14,22 +14,42 @@ import (
 const hostingSystemPrompt = "You are the New API intelligent hosting agent. Use only the provided tools. Never request or print secrets, payment keys, or root credentials. If a job is beyond granted tools or budgets, call handoff_incident. When the current wake is done, call sleep_until_hook. Do not disable, delete, or change the base URL of the current brain channel."
 
 func RunAgentTurn(agent *model.HostingAgent, hookSummary string, hookId int, eventName string) {
+	ctx := &ToolContext{
+		Agent:       agent,
+		UserID:      agent.UserId,
+		Role:        common.RoleAdminUser,
+		FromRunner:  true,
+		IncidentKey: fmt.Sprintf("%d:%d:%s", agent.Id, hookId, eventName),
+		ActorUserID: agent.UserId,
+		ActorRole:   common.RoleAdminUser,
+	}
+	runAgentLoop(agent, hookSummary, hookId, eventName, ctx, hostingSystemPrompt)
+}
+
+func runAgentLoop(agent *model.HostingAgent, hookSummary string, hookId int, eventName string, ctx *ToolContext, systemPrompt string) {
 	defer func() {
 		if r := recover(); r != nil {
 			common.SysError(fmt.Sprintf("hosting agent loop panic: %v", r))
-			_, _ = Handoff(agent, hookSummary, fmt.Sprintf("runner panic: %v", r), hookId, eventName)
+			if ctx == nil || !ctx.Interactive {
+				_, _ = Handoff(agent, hookSummary, fmt.Sprintf("runner panic: %v", r), hookId, eventName)
+			}
 		}
 	}()
-	if agent == nil || !agent.Enabled {
+	if agent == nil || !agent.Enabled || ctx == nil {
 		return
 	}
 	if overDailyBudget(agent) {
+		if ctx.Interactive {
+			return
+		}
 		_, _ = Handoff(agent, hookSummary, "daily token budget exceeded", hookId, eventName)
 		return
 	}
 	if agent.SessionId == "" {
 		agent.SessionId = model.NewHostingSessionID()
-		_ = model.DB.Model(agent).Update("session_id", agent.SessionId).Error
+		if !ctx.Interactive {
+			_ = model.DB.Model(agent).Update("session_id", agent.SessionId).Error
+		}
 	}
 
 	_ = model.AppendHostingSessionEntry(&model.HostingSessionEntry{
@@ -42,13 +62,6 @@ func RunAgentTurn(agent *model.HostingAgent, hookSummary string, hookId int, eve
 	_ = model.AddHostingBrainUsage(agent.Id, 0, 0, 1, 0)
 
 	messages := loadSessionMessages(agent)
-	ctx := &ToolContext{
-		Agent:       agent,
-		UserID:      agent.UserId,
-		Role:        common.RoleAdminUser,
-		FromRunner:  true,
-		IncidentKey: fmt.Sprintf("%d:%d:%s", agent.Id, hookId, eventName),
-	}
 	authz.MarkHostingAgentUser(agent.UserId)
 	tools := brainTools(ctx)
 	maxTurns := agent.MaxActionsPerIncident
@@ -58,7 +71,9 @@ func RunAgentTurn(agent *model.HostingAgent, hookSummary string, hookId int, eve
 
 	for turn := 0; turn < maxTurns+2; turn++ {
 		if overDailyBudget(agent) {
-			_, _ = Handoff(agent, hookSummary, "daily token budget exceeded mid-loop", hookId, eventName)
+			if !ctx.Interactive {
+				_, _ = Handoff(agent, hookSummary, "daily token budget exceeded mid-loop", hookId, eventName)
+			}
 			return
 		}
 		extra := ContextExtra{
@@ -73,7 +88,7 @@ func RunAgentTurn(agent *model.HostingAgent, hookSummary string, hookId int, eve
 		}
 		req := BrainRequest{
 			Model:    agent.BrainModel,
-			Messages: prependSystem(view),
+			Messages: prependSystemPrompt(view, systemPrompt),
 			Tools:    tools,
 		}
 		resp, err := ChatWithBrain(agent, req)
@@ -81,15 +96,27 @@ func RunAgentTurn(agent *model.HostingAgent, hookSummary string, hookId int, eve
 			summary := compactWithBrain(agent, view)
 			view = CompactMessages(agent, view, summary)
 			persistCompaction(agent, summary)
-			req.Messages = prependSystem(view)
+			req.Messages = prependSystemPrompt(view, systemPrompt)
 			resp, err = ChatWithBrain(agent, req)
 			if LooksLikeContextOverflow(err, resp) {
-				_, _ = Handoff(agent, hookSummary, "context overflow after compaction", hookId, eventName)
+				if !ctx.Interactive {
+					_, _ = Handoff(agent, hookSummary, "context overflow after compaction", hookId, eventName)
+				}
 				return
 			}
 		}
 		if err != nil {
 			_ = model.AddHostingBrainUsage(agent.Id, 0, 0, 0, 1)
+			if ctx.Interactive {
+				_ = model.AppendHostingSessionEntry(&model.HostingSessionEntry{
+					AgentId:    agent.Id,
+					SessionId:  agent.SessionId,
+					Role:       "assistant",
+					Content:    "I could not reach the AI model. Check Steward Settings and try again.",
+					TokenCount: 12,
+				})
+				return
+			}
 			reason := "brain call failed: " + err.Error()
 			if agent.BrainSource == constant.HostingBrainDedicated {
 				reason = "dedicated brain failed: " + err.Error()
@@ -109,7 +136,7 @@ func RunAgentTurn(agent *model.HostingAgent, hookSummary string, hookId int, eve
 		persistMessage(agent, assistant)
 
 		if resp == nil || len(resp.ToolCalls) == 0 {
-			if strings.TrimSpace(assistant.Content) != "" {
+			if strings.TrimSpace(assistant.Content) != "" || ctx.Interactive {
 				return
 			}
 			_, _ = Handoff(agent, hookSummary, "model returned no tool calls", hookId, eventName)
@@ -126,8 +153,12 @@ func RunAgentTurn(agent *model.HostingAgent, hookSummary string, hookId int, eve
 			if toolErr != nil {
 				content = "error: " + toolErr.Error()
 				if IsToolHandoff(toolErr) {
-					_, _ = Handoff(agent, hookSummary, toolErr.Error(), hookId, eventName)
-					return
+					if ctx.Interactive {
+						content = "paused: " + toolErr.Error()
+					} else {
+						_, _ = Handoff(agent, hookSummary, toolErr.Error(), hookId, eventName)
+						return
+					}
 				}
 			} else {
 				raw, _ := common.Marshal(result)
@@ -146,7 +177,9 @@ func RunAgentTurn(agent *model.HostingAgent, hookSummary string, hookId int, eve
 			}
 		}
 	}
-	_, _ = Handoff(agent, hookSummary, "action budget exhausted", hookId, eventName)
+	if !ctx.Interactive {
+		_, _ = Handoff(agent, hookSummary, "action budget exhausted", hookId, eventName)
+	}
 }
 
 func persistCompaction(agent *model.HostingAgent, summary string) {
@@ -203,8 +236,15 @@ func persistMessage(agent *model.HostingAgent, msg BrainMessage) {
 }
 
 func prependSystem(messages []BrainMessage) []BrainMessage {
+	return prependSystemPrompt(messages, hostingSystemPrompt)
+}
+
+func prependSystemPrompt(messages []BrainMessage, prompt string) []BrainMessage {
+	if strings.TrimSpace(prompt) == "" {
+		prompt = hostingSystemPrompt
+	}
 	out := make([]BrainMessage, 0, len(messages)+1)
-	out = append(out, BrainMessage{Role: "system", Content: hostingSystemPrompt})
+	out = append(out, BrainMessage{Role: "system", Content: prompt})
 	out = append(out, messages...)
 	return out
 }

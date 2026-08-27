@@ -44,20 +44,86 @@ func LoadHostingAgentUserIDs(db *gorm.DB) error {
 
 // RecommendedHostingAgentPermissions is the ops template applied when creating
 // an agent: channel read/operate/write, log read, hosting read. It never
-// includes sensitive_write, secret_view, or option.*.
+// includes sensitive_write or secret_view. Option read/write is granted so the
+// steward can walk an operator through system settings without exposing secrets.
 func RecommendedHostingAgentPermissions() PermissionsMap {
-	return PermissionsMap{
-		ResourceChannel: {
-			ActionRead:    true,
-			ActionOperate: true,
-			ActionWrite:   true,
-		},
-		ResourceLog: {
-			ActionRead: true,
-		},
-		ResourceHosting: {
-			ActionRead: true,
-		},
+	return HostingPresetPermissions(constant.HostingPresetOperate)
+}
+
+func HostingPresetPermissions(preset string) PermissionsMap {
+	switch preset {
+	case constant.HostingPresetWatch:
+		return PermissionsMap{
+			ResourceChannel: {ActionRead: true},
+			ResourceLog:     {ActionRead: true},
+			ResourceHosting: {ActionRead: true},
+			ResourceOption:  {ActionRead: true},
+		}
+	case constant.HostingPresetFull:
+		return PermissionsMap{
+			ResourceChannel: {
+				ActionRead:    true,
+				ActionOperate: true,
+				ActionWrite:   true,
+			},
+			ResourceLog: {
+				ActionRead: true,
+			},
+			ResourceHosting: {
+				ActionRead:  true,
+				ActionWrite: true,
+			},
+			ResourceOption: {
+				ActionRead:  true,
+				ActionWrite: true,
+			},
+			ResourceUser: {
+				ActionRead:  true,
+				ActionWrite: true,
+			},
+			ResourceToken: {
+				ActionRead:  true,
+				ActionWrite: true,
+			},
+			ResourceGroup: {
+				ActionRead:  true,
+				ActionWrite: true,
+			},
+			ResourceRedemption: {
+				ActionRead:  true,
+				ActionWrite: true,
+			},
+			ResourceSubscription: {
+				ActionRead: true,
+			},
+			ResourceVendor: {
+				ActionRead: true,
+			},
+			ResourceModelMeta: {
+				ActionRead: true,
+			},
+			ResourceSystemTask: {
+				ActionRead: true,
+			},
+		}
+	default:
+		return PermissionsMap{
+			ResourceChannel: {
+				ActionRead:    true,
+				ActionOperate: true,
+				ActionWrite:   true,
+			},
+			ResourceLog: {
+				ActionRead: true,
+			},
+			ResourceHosting: {
+				ActionRead: true,
+			},
+			ResourceOption: {
+				ActionRead:  true,
+				ActionWrite: true,
+			},
+		}
 	}
 }
 

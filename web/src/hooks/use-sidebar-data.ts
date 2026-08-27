@@ -72,6 +72,11 @@ export function useSidebarData(): SidebarData {
         title: t('General'),
         items: [
           {
+            title: t('AI Steward'),
+            url: '/steward',
+            icon: Bot,
+          },
+          {
             title: t('Overview'),
             url: '/dashboard/overview',
             icon: Activity,
@@ -152,9 +157,9 @@ export function useSidebarData(): SidebarData {
             requiredRole: ROLE.SUPER_ADMIN,
           },
           {
-            title: t('Intelligent Hosting'),
+            title: t('Steward Settings'),
             url: '/hosting',
-            icon: Bot,
+            icon: Settings,
             requiredRole: ROLE.SUPER_ADMIN,
           },
           {

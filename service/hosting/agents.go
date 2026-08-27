@@ -49,6 +49,10 @@ type CreateAgentRequest struct {
 	IssueToken            bool                 `json:"issue_token"`
 	TokenName             string               `json:"token_name"`
 	TokenAllowIPs         string               `json:"token_allow_ips"`
+	PermissionPreset      string               `json:"permission_preset"`
+	AutoReviewMode        string               `json:"auto_review_mode"`
+	BriefingMode          string               `json:"briefing_mode"`
+	IsDefault             bool                 `json:"is_default"`
 }
 
 type CreateAgentResult struct {
@@ -104,6 +108,10 @@ func CreateAgent(req CreateAgentRequest) (*CreateAgentResult, error) {
 		ReserveTokens:         req.ReserveTokens,
 		KeepRecentTokens:      req.KeepRecentTokens,
 		Remark:                req.Remark,
+		PermissionPreset:      NormalizePermissionPreset(req.PermissionPreset),
+		AutoReviewMode:        NormalizeAutoReviewMode(req.AutoReviewMode),
+		BriefingMode:          NormalizeBriefingMode(req.BriefingMode),
+		IsDefault:             req.IsDefault,
 		SessionId:             model.NewHostingSessionID(),
 	}
 	if req.Enabled != nil {
@@ -135,7 +143,9 @@ func CreateAgent(req CreateAgentRequest) (*CreateAgentResult, error) {
 			return err
 		}
 		perms := req.Permissions
-		if req.ApplyRecommendedPerms {
+		if req.PermissionPreset != "" {
+			perms = mergePermissions(authz.HostingPresetPermissions(NormalizePermissionPreset(req.PermissionPreset)), req.Permissions)
+		} else if req.ApplyRecommendedPerms {
 			perms = mergePermissions(authz.RecommendedHostingAgentPermissions(), req.Permissions)
 		}
 		return authz.SetHostingAgentPermissionsInTx(tx, user.Id, perms)
@@ -156,6 +166,12 @@ func CreateAgent(req CreateAgentRequest) (*CreateAgentResult, error) {
 		}
 		result.Secret = issued.Secret
 		result.Agent = PublicAgent(agent)
+	}
+	if req.IsDefault {
+		_ = model.SetDefaultHostingAgent(agent.Id)
+		if result.Agent != nil {
+			result.Agent.IsDefault = true
+		}
 	}
 	return result, nil
 }
@@ -245,8 +261,24 @@ func UpdateAgent(id int, req CreateAgentRequest) (*AgentView, error) {
 	if req.Remark != "" {
 		updates["remark"] = req.Remark
 	}
+	if req.PermissionPreset != "" {
+		preset := NormalizePermissionPreset(req.PermissionPreset)
+		updates["permission_preset"] = preset
+		if req.Permissions == nil {
+			req.Permissions = authz.HostingPresetPermissions(preset)
+		}
+	}
+	if req.AutoReviewMode != "" {
+		updates["auto_review_mode"] = NormalizeAutoReviewMode(req.AutoReviewMode)
+	}
+	if req.BriefingMode != "" {
+		updates["briefing_mode"] = NormalizeBriefingMode(req.BriefingMode)
+	}
 	if err := model.DB.Model(agent).Updates(updates).Error; err != nil {
 		return nil, err
+	}
+	if req.IsDefault {
+		_ = model.SetDefaultHostingAgent(id)
 	}
 	if req.Permissions != nil {
 		if err := authz.SetHostingAgentPermissions(agent.UserId, req.Permissions); err != nil {

@@ -91,10 +91,12 @@ func mcpError(id any, code int, message string) gin.H {
 
 func ToolContextFromAgent(agent *model.HostingAgent, token *model.HostingAgentToken, ip string) *ToolContext {
 	ctx := &ToolContext{
-		Agent:    agent,
-		UserID:   agent.UserId,
-		Role:     common.RoleAdminUser,
-		ClientIP: ip,
+		Agent:       agent,
+		UserID:      agent.UserId,
+		Role:        common.RoleAdminUser,
+		ClientIP:    ip,
+		ActorUserID: agent.UserId,
+		ActorRole:   common.RoleAdminUser,
 	}
 	if token != nil {
 		ctx.TokenID = token.Id

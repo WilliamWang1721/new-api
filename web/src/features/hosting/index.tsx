@@ -63,6 +63,7 @@ import {
   updateHostingIncident,
 } from './api'
 import { AgentEditorDialog } from './components/agent-editor-dialog'
+import { SimpleStewardSetup } from './components/simple-setup'
 import {
   agentFormPayload,
   EMPTY_HOSTING_AGENT_FORM,
@@ -179,7 +180,7 @@ export function HostingPage() {
     <SectionPageLayout>
       <SectionPageLayout.Title>
         <span className='inline-flex min-w-0 items-center gap-2'>
-          <span className='truncate'>{t('Intelligent Hosting')}</span>
+          <span className='truncate'>{t('Steward Settings')}</span>
           <Badge variant='outline' className='shrink-0'>
             Root
           </Badge>
@@ -188,7 +189,7 @@ export function HostingPage() {
       <SectionPageLayout.Actions>
         <div className='flex items-center gap-3'>
           <span className='text-muted-foreground text-sm'>
-            {t('Hosting enabled')}
+            {t('Steward is on')}
           </span>
           <Switch
             checked={panelEnabled && hostingState !== 'disabled'}
@@ -201,11 +202,10 @@ export function HostingPage() {
               }
               queryClient.invalidateQueries({ queryKey: ['hosting-status'] })
               toast.success(
-                checked ? t('Hosting enabled') : t('Hosting disabled')
+                checked ? t('Steward is on') : t('Steward is paused')
               )
             }}
           />
-          <Button onClick={openCreate}>{t('Create agent')}</Button>
         </div>
       </SectionPageLayout.Actions>
       <SectionPageLayout.Content>
@@ -221,7 +221,7 @@ export function HostingPage() {
                 {status?.error
                   ? status.error
                   : t(
-                      'The API continues to serve requests. Enable hosting with HOSTING_ENABLED or fix the startup error.'
+                      'The API continues to work. Turn the steward on with the switch above, or ask the server admin if this switch is locked.'
                     )}
               </AlertDescription>
             </Alert>
@@ -238,6 +238,20 @@ export function HostingPage() {
             </Alert>
           ) : null}
 
+          <SimpleStewardSetup />
+
+          <details className='rounded-xl border p-4'>
+            <summary className='cursor-pointer text-sm font-medium'>
+              {t('Advanced settings')}
+            </summary>
+            <p className='text-muted-foreground mt-2 mb-4 text-sm'>
+              {t(
+                'You can skip this. Open it only if you need extra tokens or a second helper.'
+              )}
+            </p>
+            <div className='mb-3'>
+              <Button onClick={openCreate}>{t('Add extra helper')}</Button>
+            </div>
           <div className='grid gap-1'>
             <span className='text-muted-foreground text-sm'>
               {t('Token IP allowlist')}
@@ -276,13 +290,21 @@ export function HostingPage() {
             </CardContent>
           </Card>
 
-          <Tabs defaultValue='agents'>
+          <Tabs defaultValue='setup'>
             <TabsList>
-              <TabsTrigger value='agents'>{t('Agents')}</TabsTrigger>
+              <TabsTrigger value='setup'>{t('Approvals & activity')}</TabsTrigger>
+              <TabsTrigger value='agents'>{t('Advanced')}</TabsTrigger>
               <TabsTrigger value='incidents'>{t('Incidents')}</TabsTrigger>
-              <TabsTrigger value='hooks'>{t('Hooks')}</TabsTrigger>
+              <TabsTrigger value='hooks'>{t('Reminders')}</TabsTrigger>
               <TabsTrigger value='session'>{t('Session')}</TabsTrigger>
             </TabsList>
+            <TabsContent value='setup' className='space-y-3 pt-3'>
+              <p className='text-muted-foreground text-sm'>
+                {t(
+                  'Approvals appear on the AI Steward home page. Use Advanced only if you need extra tokens or a second helper.'
+                )}
+              </p>
+            </TabsContent>
             <TabsContent value='agents' className='space-y-3 pt-3'>
               {agents.length === 0 ? (
                 <p className='text-muted-foreground text-sm'>
@@ -612,6 +634,7 @@ export function HostingPage() {
               )}
             </TabsContent>
           </Tabs>
+          </details>
         </div>
       </SectionPageLayout.Content>
 

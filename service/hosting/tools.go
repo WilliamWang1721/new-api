@@ -22,6 +22,10 @@ type ToolContext struct {
 	Terminate   bool
 	FromRunner  bool
 	IncidentKey string
+	ActorUserID int
+	ActorRole   int
+	SkipReview  bool
+	Interactive bool
 }
 
 type ToolSpec struct {
@@ -524,6 +528,56 @@ func allTools() []*ToolSpec {
 			Handler:     toolDeleteHook,
 		},
 		{
+			Name:        "get_setup_checklist",
+			Description: "Get a simple first-time setup checklist: site name, sign-ups, channels, and whether the steward can talk.",
+			InputSchema: toolSchema(nil),
+			AlwaysAllow: true,
+			Handler:     toolGetSetupChecklist,
+		},
+		{
+			Name:        "list_system_settings",
+			Description: "List system settings with plain-language titles. Secrets are hidden. Optional keyword or category: site, access, billing, operations, features.",
+			InputSchema: toolSchema(map[string]any{
+				"keyword":  map[string]any{"type": "string"},
+				"category": map[string]any{"type": "string"},
+			}),
+			Permission: &authz.OptionRead,
+			Handler:    toolListSystemSettings,
+		},
+		{
+			Name:        "update_system_setting",
+			Description: "Change one system setting by key. Explain the change in plain language first. Never print secret values. Risky keys wait for approval.",
+			InputSchema: toolSchema(map[string]any{
+				"key":   map[string]any{"type": "string"},
+				"value": map[string]any{"type": "string"},
+			}, "key", "value"),
+			Permission: &authz.OptionWrite,
+			Mutating:   true,
+			Handler:    toolUpdateSystemSetting,
+		},
+		{
+			Name:        "request_user_access",
+			Description: "File a user access request: quota, group, enable, or admin. Small quota may be auto-approved.",
+			InputSchema: toolSchema(map[string]any{
+				"request_type":   map[string]any{"type": "string", "description": "quota, group, enable, or admin"},
+				"target_user_id": map[string]any{"type": "integer"},
+				"quota":          map[string]any{"type": "integer"},
+				"group":          map[string]any{"type": "string"},
+				"note":           map[string]any{"type": "string"},
+			}, "request_type"),
+			AlwaysAllow: true,
+			Handler:     queueUserAccessRequest,
+		},
+		{
+			Name:        "list_approvals",
+			Description: "List recent permission and tool-action approvals.",
+			InputSchema: toolSchema(map[string]any{
+				"status": map[string]any{"type": "string"},
+			}),
+			AlwaysAllow: true,
+			Handler:     toolListApprovals,
+		},
+		{
 			Name:        "handoff_incident",
 			Description: "Hand the current issue to a human. Always available.",
 			InputSchema: toolSchema(map[string]any{
@@ -544,6 +598,15 @@ func allTools() []*ToolSpec {
 			Handler:     toolSleepUntilHook,
 		},
 	}
+}
+
+func toolListApprovals(ctx *ToolContext, args map[string]any) (any, error) {
+	status := argString(args, "status")
+	items, err := ListApprovalsForActor(ctx.Agent.Id, ctx.ActorUserID, ctx.ActorRole, status)
+	if err != nil {
+		return nil, err
+	}
+	return map[string]any{"items": items}, nil
 }
 
 func toolByName(name string) *ToolSpec {
@@ -624,13 +687,20 @@ func ExecuteTool(ctx *ToolContext, name string, args map[string]any) (any, error
 		}
 		return nil, err
 	}
-	if ctx.Agent.DryRun && tool.Mutating && name != "handoff_incident" && name != "sleep_until_hook" {
+	if ctx.Agent.DryRun && tool.Mutating && name != "handoff_incident" && name != "sleep_until_hook" && name != "request_user_access" {
 		if name != "manage_multi_keys" || (argString(args, "action") != "" && argString(args, "action") != "get_key_status") {
-			if ctx.FromRunner {
+			if ctx.FromRunner && !ctx.Interactive {
 				return nil, handoffErr("dry_run", "dry-run blocked mutating tool "+name)
 			}
 			return map[string]any{"dry_run": true, "tool": name, "args": args}, nil
 		}
+	}
+	queued, handled, err := maybeQueueToolApproval(ctx, tool, args)
+	if err != nil {
+		return nil, err
+	}
+	if handled {
+		return queued, nil
 	}
 	result, err := tool.Handler(ctx, args)
 	auditTool(ctx, name, args, err)

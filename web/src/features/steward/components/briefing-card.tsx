@@ -16,38 +16,38 @@ along with this program. If not, see <https://www.gnu.org/licenses/>.
 
 For commercial licensing, please contact support@quantumnous.com
 */
-import { Link } from '@tanstack/react-router'
-import { ArrowRight } from 'lucide-react'
 import { useTranslation } from 'react-i18next'
 
 import { Button } from '@/components/ui/button'
+import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card'
 
-interface HeroButtonsProps {
-  isAuthenticated: boolean
+type BriefingCardProps = {
+  text: string
+  onRefresh: () => void
+  busy: boolean
 }
 
-/**
- * Hero section action buttons
- */
-export function HeroButtons({ isAuthenticated }: HeroButtonsProps) {
+export function BriefingCard(props: BriefingCardProps) {
   const { t } = useTranslation()
-  if (isAuthenticated) {
-    return (
-      <Button size='lg' render={<Link to='/steward' />}>
-        {t('Open AI Steward')} <ArrowRight className='ml-2 h-5 w-5' />
-      </Button>
-    )
+  if (!props.text) {
+    return null
   }
-
   return (
-    <>
-      <Button size='lg' render={<Link to='/sign-up' />}>
-        {t('Get Started')}
-        <ArrowRight className='ml-2 h-5 w-5' />
-      </Button>
-      <Button size='lg' variant='outline' render={<Link to='/sign-in' />}>
-        {t('Sign In')}
-      </Button>
-    </>
+    <Card size='sm'>
+      <CardHeader className='flex flex-row items-start justify-between gap-2'>
+        <CardTitle className='text-sm'>{t('Status briefing')}</CardTitle>
+        <Button
+          variant='outline'
+          size='sm'
+          disabled={props.busy}
+          onClick={props.onRefresh}
+        >
+          {t('Refresh briefing')}
+        </Button>
+      </CardHeader>
+      <CardContent className='text-sm whitespace-pre-wrap'>
+        {props.text}
+      </CardContent>
+    </Card>
   )
 }
