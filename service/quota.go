@@ -512,6 +512,13 @@ func checkAndSendQuotaNotify(relayInfo *relaycommon.RelayInfo, quota int, preCon
 			if err != nil {
 				common.SysError(fmt.Sprintf("failed to send quota notify to user %d: %s", relayInfo.UserId, err.Error()))
 			}
+			EmitHostingEvent(HostingEvent{
+				Name:   constant.HostingEventQuota,
+				Reason: prompt,
+				Payload: map[string]any{
+					"user_id": relayInfo.UserId,
+				},
+			})
 		}
 	})
 }
@@ -561,5 +568,13 @@ func checkAndSendSubscriptionQuotaNotify(relayInfo *relaycommon.RelayInfo) {
 		if err := NotifyUser(relayInfo.UserId, relayInfo.UserEmail, relayInfo.UserSetting, dto.NewNotify(dto.NotifyTypeQuotaExceed, prompt, content, values)); err != nil {
 			common.SysError(fmt.Sprintf("failed to send subscription quota notify to user %d: %s", relayInfo.UserId, err.Error()))
 		}
+		EmitHostingEvent(HostingEvent{
+			Name:   constant.HostingEventQuota,
+			Reason: prompt,
+			Payload: map[string]any{
+				"user_id":         relayInfo.UserId,
+				"subscription_id": relayInfo.SubscriptionId,
+			},
+		})
 	})
 }

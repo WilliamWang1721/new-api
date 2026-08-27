@@ -19,6 +19,7 @@ import (
 	"github.com/QuantumNous/new-api/relaykit/dto"
 	"github.com/QuantumNous/new-api/service"
 	"github.com/QuantumNous/new-api/service/authz"
+	"github.com/QuantumNous/new-api/service/hosting"
 
 	"github.com/gin-gonic/gin"
 	"gorm.io/gorm"
@@ -681,6 +682,7 @@ func AddChannel(c *gin.Context) {
 	}
 
 	channels := make([]model.Channel, 0, len(keys))
+	addChannelRequest.Channel.Group = hosting.ResolveChannelGroups(addChannelRequest.Channel.Group, constant.DefaultHostingChannelGroups)
 	for _, key := range keys {
 		if key == "" {
 			continue
@@ -963,6 +965,10 @@ func UpdateChannel(c *gin.Context) {
 		return
 	}
 	clearChannelReadOnlyFields(&channel, requestData)
+	if _, ok := requestData["group"]; ok {
+		group, _ := requestData["group"].(string)
+		channel.Group = hosting.ResolveChannelGroups(group, constant.DefaultHostingChannelGroups)
+	}
 
 	// 使用统一的校验函数
 	if err := validateChannel(&channel.Channel, false); err != nil {

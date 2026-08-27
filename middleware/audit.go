@@ -181,6 +181,9 @@ func finishAdminAudit(c *gin.Context, writer *auditResponseWriter) {
 }
 
 func auditAuthMethod(c *gin.Context) string {
+	if method := c.GetString("auth_method"); method != "" {
+		return method
+	}
 	if c.GetBool("use_access_token") {
 		return "access_token"
 	}

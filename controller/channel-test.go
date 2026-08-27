@@ -939,6 +939,14 @@ func testChannelForHealthCheck(ctx context.Context, channel *model.Channel, test
 		summary.Succeeded++
 	} else {
 		summary.Failed++
+		service.EmitHostingEvent(service.HostingEvent{
+			Name:      constant.HostingEventChannelTest,
+			ChannelId: channel.Id,
+			Reason:    newAPIError.Error(),
+			Payload: map[string]any{
+				"channel_name": channel.Name,
+			},
+		})
 	}
 
 	if allowDisable && isChannelEnabled && shouldBanChannel && channel.GetAutoBan() {

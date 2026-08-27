@@ -30,6 +30,14 @@ func DisableChannel(channelError types.ChannelError, reason string) {
 		subject := fmt.Sprintf("通道「%s」（#%d）已被禁用", channelError.ChannelName, channelError.ChannelId)
 		content := fmt.Sprintf("通道「%s」（#%d）已被禁用，原因：%s", channelError.ChannelName, channelError.ChannelId, reason)
 		NotifyRootUser(formatNotifyType(channelError.ChannelId, common.ChannelStatusAutoDisabled), subject, content)
+		EmitHostingEvent(HostingEvent{
+			Name:      "channel.auto_disabled",
+			ChannelId: channelError.ChannelId,
+			Reason:    reason,
+			Payload: map[string]any{
+				"channel_name": channelError.ChannelName,
+			},
+		})
 	}
 }
 
@@ -39,6 +47,13 @@ func EnableChannel(channelId int, usingKey string, channelName string) {
 		subject := fmt.Sprintf("通道「%s」（#%d）已被启用", channelName, channelId)
 		content := fmt.Sprintf("通道「%s」（#%d）已被启用", channelName, channelId)
 		NotifyRootUser(formatNotifyType(channelId, common.ChannelStatusEnabled), subject, content)
+		EmitHostingEvent(HostingEvent{
+			Name:      "channel.auto_enabled",
+			ChannelId: channelId,
+			Payload: map[string]any{
+				"channel_name": channelName,
+			},
+		})
 	}
 }
 
