@@ -41,9 +41,10 @@ func TestInitSeedsBuiltInRolesAndPoliciesOnce(t *testing.T) {
 
 	var roles []model.AuthzRole
 	require.NoError(t, db.Order("sort asc").Find(&roles).Error)
-	require.Len(t, roles, 2)
+	require.Len(t, roles, 3)
 	assert.Equal(t, BuiltInRoleRoot, roles[0].Key)
 	assert.Equal(t, BuiltInRoleAdmin, roles[1].Key)
+	assert.Equal(t, BuiltInRoleHostingAgent, roles[2].Key)
 
 	assert.True(t, Can(1, common.RoleRootUser, ChannelSensitiveWrite))
 	assert.True(t, Can(2, common.RoleAdminUser, ChannelRead))
@@ -51,6 +52,10 @@ func TestInitSeedsBuiltInRolesAndPoliciesOnce(t *testing.T) {
 	assert.True(t, Can(2, common.RoleAdminUser, ChannelWrite))
 	assert.False(t, Can(2, common.RoleAdminUser, ChannelSensitiveWrite))
 	assert.False(t, Can(3, common.RoleCommonUser, ChannelRead))
+	assert.True(t, Can(2, common.RoleAdminUser, UserRead))
+	assert.True(t, Can(2, common.RoleAdminUser, LogRead))
+	assert.False(t, Can(2, common.RoleAdminUser, OptionWrite))
+	assert.False(t, Can(2, common.RoleAdminUser, HostingRead))
 }
 
 func TestInitOnSlaveOnlyLoadsPolicies(t *testing.T) {
@@ -97,15 +102,14 @@ func TestSetUserPermissionsStoresOnlyOverrides(t *testing.T) {
 
 	assert.True(t, Can(42, common.RoleAdminUser, ChannelSensitiveWrite))
 	assert.False(t, Can(42, common.RoleAdminUser, ChannelWrite))
-	assert.Equal(t, PermissionsMap{
-		ResourceChannel: {
-			ActionRead:           true,
-			ActionOperate:        true,
-			ActionWrite:          false,
-			ActionSensitiveWrite: true,
-			ActionSecretView:     false,
-		},
-	}, ExplicitUserPermissions(42))
+	assert.Equal(t, map[string]bool{
+		ActionRead:           true,
+		ActionOperate:        true,
+		ActionWrite:          false,
+		ActionSensitiveWrite: true,
+		ActionSecretView:     false,
+	}, ExplicitUserPermissions(42)[ResourceChannel])
+	assert.True(t, ExplicitUserPermissions(42)[ResourceLog][ActionRead])
 	assert.Equal(t, PermissionsMap{
 		ResourceChannel: {
 			ActionSensitiveWrite: true,
@@ -125,15 +129,13 @@ func TestSetUserPermissionsStoresOnlyOverrides(t *testing.T) {
 		ActionSecretView:     false,
 	}}))
 	assert.False(t, Can(42, common.RoleAdminUser, ChannelSensitiveWrite))
-	assert.Equal(t, PermissionsMap{
-		ResourceChannel: {
-			ActionRead:           true,
-			ActionOperate:        true,
-			ActionWrite:          true,
-			ActionSensitiveWrite: false,
-			ActionSecretView:     false,
-		},
-	}, ExplicitUserPermissions(42))
+	assert.Equal(t, map[string]bool{
+		ActionRead:           true,
+		ActionOperate:        true,
+		ActionWrite:          true,
+		ActionSensitiveWrite: false,
+		ActionSecretView:     false,
+	}, ExplicitUserPermissions(42)[ResourceChannel])
 	assert.Empty(t, ExplicitUserOverrides(42))
 }
 
@@ -226,4 +228,49 @@ func TestCapabilitiesUseCatalogShape(t *testing.T) {
 	assert.True(t, capabilities[ResourceChannel][ActionWrite])
 	assert.False(t, capabilities[ResourceChannel][ActionSensitiveWrite])
 	assert.False(t, capabilities[ResourceChannel][ActionSecretView])
+}
+
+func TestHostingAgentHasEmptyBaseline(t *testing.T) {
+	db := newAuthzTestDB(t)
+	require.NoError(t, Init(db))
+
+	MarkHostingAgentUser(88)
+	t.Cleanup(func() { UnmarkHostingAgentUser(88) })
+
+	assert.False(t, Can(88, common.RoleAdminUser, ChannelRead))
+	assert.False(t, Can(88, common.RoleAdminUser, LogRead))
+	assert.False(t, Can(88, common.RoleAdminUser, HostingRead))
+	assert.Empty(t, PermissionsForRole(BuiltInRoleHostingAgent))
+	assert.Len(t, Roles(), 2)
+}
+
+func TestSetHostingAgentPermissionsStoresAllows(t *testing.T) {
+	db := newAuthzTestDB(t)
+	require.NoError(t, Init(db))
+
+	MarkHostingAgentUser(91)
+	t.Cleanup(func() { UnmarkHostingAgentUser(91) })
+
+	require.NoError(t, SetHostingAgentPermissions(91, RecommendedHostingAgentPermissions()))
+
+	assert.True(t, Can(91, common.RoleAdminUser, ChannelRead))
+	assert.True(t, Can(91, common.RoleAdminUser, ChannelOperate))
+	assert.True(t, Can(91, common.RoleAdminUser, ChannelWrite))
+	assert.False(t, Can(91, common.RoleAdminUser, ChannelSensitiveWrite))
+	assert.False(t, Can(91, common.RoleAdminUser, ChannelSecretView))
+	assert.True(t, Can(91, common.RoleAdminUser, LogRead))
+	assert.True(t, Can(91, common.RoleAdminUser, HostingRead))
+	assert.False(t, Can(91, common.RoleAdminUser, OptionWrite))
+
+	require.NoError(t, SetHostingAgentPermissions(91, PermissionsMap{
+		ResourceChannel: {
+			ActionRead:           true,
+			ActionOperate:        true,
+			ActionWrite:          true,
+			ActionSensitiveWrite: true,
+			ActionSecretView:     true,
+		},
+	}))
+	assert.True(t, Can(91, common.RoleAdminUser, ChannelSensitiveWrite))
+	assert.False(t, Can(91, common.RoleAdminUser, ChannelSecretView))
 }

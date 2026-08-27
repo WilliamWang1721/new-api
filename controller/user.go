@@ -156,7 +156,7 @@ func setupLogin(user *model.User, c *gin.Context) {
 }
 
 func setupLoginAtAuthVersion(user *model.User, expectedAuthVersion int64, c *gin.Context) {
-	if user == nil || user.Id <= 0 || user.Status != common.UserStatusEnabled {
+	if user == nil || user.Id <= 0 || user.Status != common.UserStatusEnabled || user.IsAgentAccount() {
 		common.ApiErrorI18n(c, i18n.MsgAuthUserBanned)
 		return
 	}

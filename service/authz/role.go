@@ -1,8 +1,9 @@
 package authz
 
 const (
-	BuiltInRoleRoot  = "root"
-	BuiltInRoleAdmin = "admin"
+	BuiltInRoleRoot         = "root"
+	BuiltInRoleAdmin        = "admin"
+	BuiltInRoleHostingAgent = "hosting_agent"
 )
 
 // RoleSpec describes a role. A superuser role is allowed every permission
@@ -13,6 +14,7 @@ type RoleSpec struct {
 	Description string
 	BuiltIn     bool
 	Superuser   bool
+	Hidden      bool
 	Sort        int
 }
 
@@ -33,6 +35,15 @@ var builtInRoles = []RoleSpec{
 		Superuser:   false,
 		Sort:        10,
 	},
+	{
+		Key:         BuiltInRoleHostingAgent,
+		Name:        "Hosting Agent",
+		Description: "Built-in hosting agent role with an empty grant matrix",
+		BuiltIn:     true,
+		Superuser:   false,
+		Hidden:      true,
+		Sort:        20,
+	},
 }
 
 // RoleDescriptor exposes a role together with its baseline grant matrix.
@@ -48,6 +59,9 @@ type RoleDescriptor struct {
 func Roles() []RoleDescriptor {
 	result := make([]RoleDescriptor, 0, len(builtInRoles))
 	for _, spec := range builtInRoles {
+		if spec.Hidden {
+			continue
+		}
 		result = append(result, RoleDescriptor{
 			Key:       spec.Key,
 			Name:      spec.Name,

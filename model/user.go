@@ -8,6 +8,7 @@ import (
 	"strings"
 
 	"github.com/QuantumNous/new-api/common"
+	"github.com/QuantumNous/new-api/constant"
 	"github.com/QuantumNous/new-api/logger"
 	"github.com/QuantumNous/new-api/relaykit/dto"
 	"github.com/QuantumNous/new-api/setting/operation_setting"
@@ -105,6 +106,7 @@ type User struct {
 	LinuxDOId        string                     `json:"linux_do_id" gorm:"column:linux_do_id;index"`
 	Setting          string                     `json:"setting" gorm:"type:text;column:setting"`
 	Remark           string                     `json:"remark,omitempty" gorm:"type:varchar(255)" validate:"max=255"`
+	AccountKind      string                     `json:"account_kind,omitempty" gorm:"type:varchar(16);column:account_kind;index"`
 	StripeCustomer   string                     `json:"stripe_customer" gorm:"type:varchar(64);column:stripe_customer;index"`
 	CreatedAt        int64                      `json:"created_at" gorm:"autoCreateTime;column:created_at"`
 	LastLoginAt      int64                      `json:"last_login_at" gorm:"default:0;column:last_login_at"`
@@ -386,6 +388,14 @@ func GetMaxUserId() int {
 	return user.Id
 }
 
+func excludeAgentAccounts(tx *gorm.DB) *gorm.DB {
+	return tx.Where("account_kind IS NULL OR account_kind = ? OR account_kind <> ?", "", constant.AccountKindAgent)
+}
+
+func (user *User) IsAgentAccount() bool {
+	return user != nil && user.AccountKind == constant.AccountKindAgent
+}
+
 func GetAllUsers(pageInfo *common.PageInfo, sortOptions ...UserSortOptions) (users []*User, total int64, err error) {
 	// Start transaction
 	tx := DB.Begin()
@@ -399,7 +409,7 @@ func GetAllUsers(pageInfo *common.PageInfo, sortOptions ...UserSortOptions) (use
 	}()
 
 	// Get total count within transaction
-	err = tx.Unscoped().Model(&User{}).Count(&total).Error
+	err = excludeAgentAccounts(tx.Unscoped().Model(&User{})).Count(&total).Error
 	if err != nil {
 		tx.Rollback()
 		return nil, 0, err
@@ -407,7 +417,7 @@ func GetAllUsers(pageInfo *common.PageInfo, sortOptions ...UserSortOptions) (use
 
 	// Get paginated users within same transaction
 	order := resolveUserSortOptions(sortOptions)
-	err = order.Apply(tx.Unscoped()).Limit(pageInfo.GetPageSize()).Offset(pageInfo.GetStartIdx()).Omit("password", "access_token").Find(&users).Error
+	err = order.Apply(excludeAgentAccounts(tx.Unscoped())).Limit(pageInfo.GetPageSize()).Offset(pageInfo.GetStartIdx()).Omit("password", "access_token").Find(&users).Error
 	if err != nil {
 		tx.Rollback()
 		return nil, 0, err
@@ -438,7 +448,7 @@ func SearchUsers(keyword string, group string, role *int, status *int, startIdx 
 	}()
 
 	// 构建基础查询
-	query := tx.Unscoped().Model(&User{})
+	query := excludeAgentAccounts(tx.Unscoped().Model(&User{}))
 
 	// 构建搜索条件
 	likeCondition := "username LIKE ? OR email LIKE ? OR display_name LIKE ?"
@@ -1001,6 +1011,9 @@ func (user *User) ValidateAndFill() (err error) {
 		}
 		return fmt.Errorf("%w: %v", ErrDatabase, err)
 	}
+	if user.IsAgentAccount() {
+		return ErrInvalidCredentials
+	}
 	if user.Password == "" {
 		return ErrInvalidCredentials
 	}
@@ -1174,6 +1187,9 @@ func ValidateAccessToken(token string) (*User, error) {
 			return nil, nil
 		}
 		return nil, fmt.Errorf("%w: %v", ErrDatabase, err)
+	}
+	if user.IsAgentAccount() {
+		return nil, nil
 	}
 	return user, nil
 }
