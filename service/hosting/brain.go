@@ -6,6 +6,7 @@ import (
 	"io"
 	"net/http"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/QuantumNous/new-api/common"
@@ -52,12 +53,34 @@ type BrainToolFn struct {
 }
 
 type BrainResponse struct {
-	Content      string
-	ToolCalls    []ToolCall
-	PromptTokens int
-	OutputTokens int
-	FinishReason string
-	RawError     string
+	Content       string
+	ToolCalls     []ToolCall
+	PromptTokens  int
+	OutputTokens  int
+	FinishReason  string
+	RawError      string
+	PinnedChannel int
+}
+
+// InternalBrainRelayFunc runs an internal-channel brain call through the full
+// relay path (distribute, retry, billing, consume logs).
+type InternalBrainRelayFunc func(agent *model.HostingAgent, req BrainRequest) (*BrainResponse, error)
+
+var (
+	internalBrainRelay   InternalBrainRelayFunc
+	internalBrainRelayMu sync.RWMutex
+)
+
+func SetInternalBrainRelay(fn InternalBrainRelayFunc) {
+	internalBrainRelayMu.Lock()
+	defer internalBrainRelayMu.Unlock()
+	internalBrainRelay = fn
+}
+
+func getInternalBrainRelay() InternalBrainRelayFunc {
+	internalBrainRelayMu.RLock()
+	defer internalBrainRelayMu.RUnlock()
+	return internalBrainRelay
 }
 
 func brainHTTPClient(timeoutSec int) *http.Client {
@@ -83,40 +106,11 @@ func ChatWithBrain(agent *model.HostingAgent, req BrainRequest) (*BrainResponse,
 }
 
 func chatInternal(agent *model.HostingAgent, req BrainRequest) (*BrainResponse, error) {
-	quota, err := model.GetUserQuota(agent.UserId, true)
-	if err == nil && quota <= 0 {
-		return nil, fmt.Errorf("hosting user quota exhausted")
+	fn := getInternalBrainRelay()
+	if fn == nil {
+		return nil, fmt.Errorf("internal brain relay is not registered")
 	}
-	var channel *model.Channel
-	if agent.BrainChannelId > 0 {
-		channel, err = model.GetChannelById(agent.BrainChannelId, true)
-	} else {
-		group := agent.BrainGroup
-		if group == "" {
-			group = "default"
-		}
-		channel, err = model.GetRandomSatisfiedChannel(group, agent.BrainModel, 0, "")
-	}
-	if err != nil {
-		return nil, fmt.Errorf("internal brain channel unavailable: %w", err)
-	}
-	if channel.Status != common.ChannelStatusEnabled {
-		return nil, fmt.Errorf("internal brain channel is not enabled")
-	}
-	key, _, keyErr := channel.GetNextEnabledKey()
-	if keyErr != nil {
-		return nil, fmt.Errorf("internal brain channel has no key")
-	}
-	base := strings.TrimRight(channel.GetBaseURL(), "/")
-	resp, callErr := postChatCompletions(base, key, nil, agent.DedicatedTimeoutSec, req)
-	if callErr == nil && resp != nil {
-		charge := resp.PromptTokens + resp.OutputTokens
-		if charge > 0 {
-			_ = model.DecreaseUserQuota(agent.UserId, charge, true)
-			model.UpdateUserUsedQuotaAndRequestCount(agent.UserId, charge)
-		}
-	}
-	return resp, callErr
+	return fn(agent, req)
 }
 
 func chatDedicated(agent *model.HostingAgent, req BrainRequest) (*BrainResponse, error) {
@@ -125,11 +119,11 @@ func chatDedicated(agent *model.HostingAgent, req BrainRequest) (*BrainResponse,
 		return nil, fmt.Errorf("dedicated brain key is invalid")
 	}
 	base := strings.TrimRight(agent.DedicatedBaseURL, "/")
-	headers := parseExtraHeaders(agent.DedicatedHeaders)
+	headers := ParseExtraHeaders(agent.DedicatedHeaders)
 	return postChatCompletions(base, key, headers, agent.DedicatedTimeoutSec, req)
 }
 
-func parseExtraHeaders(raw string) map[string]string {
+func ParseExtraHeaders(raw string) map[string]string {
 	raw = strings.TrimSpace(raw)
 	if raw == "" {
 		return nil
@@ -190,6 +184,10 @@ func postChatCompletions(baseURL, apiKey string, extra map[string]string, timeou
 	if resp.StatusCode >= 400 {
 		return &BrainResponse{RawError: string(raw), FinishReason: "error"}, fmt.Errorf("brain HTTP %d", resp.StatusCode)
 	}
+	return ParseChatCompletionBody(raw)
+}
+
+func ParseChatCompletionBody(raw []byte) (*BrainResponse, error) {
 	var parsed struct {
 		Usage struct {
 			PromptTokens     int `json:"prompt_tokens"`
@@ -231,6 +229,16 @@ func ProbeChannel(channel *model.Channel) (bool, string) {
 	key, _, err := channel.GetNextEnabledKey()
 	if err != nil {
 		return false, "no enabled key"
+	}
+	return ProbeChannelKey(channel, key)
+}
+
+func ProbeChannelKey(channel *model.Channel, key string) (bool, string) {
+	if channel == nil {
+		return false, "channel not found"
+	}
+	if strings.TrimSpace(key) == "" {
+		return false, "empty key"
 	}
 	base := strings.TrimRight(channel.GetBaseURL(), "/")
 	if base == "" {
@@ -291,7 +299,7 @@ func FetchUpstreamModelNames(channel *model.Channel) ([]string, string) {
 	return names, "ok"
 }
 
-func TestDedicatedBrain(baseURL, apiKey, modelName string, timeoutSec int) (bool, string) {
+func TestDedicatedBrain(baseURL, apiKey, modelName string, timeoutSec int, extra map[string]string) (bool, string) {
 	req := BrainRequest{
 		Model: modelName,
 		Messages: []BrainMessage{
@@ -300,7 +308,7 @@ func TestDedicatedBrain(baseURL, apiKey, modelName string, timeoutSec int) (bool
 	}
 	maxTokens := 8
 	req.MaxTokens = &maxTokens
-	resp, err := postChatCompletions(strings.TrimRight(baseURL, "/"), apiKey, nil, timeoutSec, req)
+	resp, err := postChatCompletions(strings.TrimRight(baseURL, "/"), apiKey, extra, timeoutSec, req)
 	if err != nil {
 		msg := err.Error()
 		if resp != nil && resp.RawError != "" {

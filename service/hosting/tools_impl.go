@@ -42,11 +42,35 @@ func RuntimeSnapshot() map[string]any {
 		})
 	}
 	rt := GetRuntime()
+	inspection := map[string]any{}
+	if model.DB != nil {
+		latest, err := model.GetLatestSystemTasks([]string{
+			model.SystemTaskTypeChannelTest,
+			model.SystemTaskTypeModelUpdate,
+			model.SystemTaskTypeHostingHooks,
+		})
+		if err == nil {
+			for name, task := range latest {
+				if task == nil {
+					continue
+				}
+				inspection[name] = map[string]any{
+					"status":     task.Status,
+					"updated_at": task.UpdatedAt,
+					"error":      task.Error,
+				}
+			}
+		}
+	}
 	return map[string]any{
 		"hosting":                rt.State,
 		"auto_disabled_count":    autoDisabled,
 		"recent_error_logs":      summaries,
 		"default_channel_groups": constant.DefaultHostingChannelGroups,
+		"inspection_tasks":       inspection,
+		"host_resources": map[string]any{
+			"alloc_mb": hostAllocMB(),
+		},
 	}
 }
 

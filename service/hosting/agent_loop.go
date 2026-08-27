@@ -1,6 +1,7 @@
 package hosting
 
 import (
+	"errors"
 	"fmt"
 	"strings"
 
@@ -42,9 +43,11 @@ func RunAgentTurn(agent *model.HostingAgent, hookSummary string, hookId int, eve
 
 	messages := loadSessionMessages(agent)
 	ctx := &ToolContext{
-		Agent:  agent,
-		UserID: agent.UserId,
-		Role:   common.RoleAdminUser,
+		Agent:       agent,
+		UserID:      agent.UserId,
+		Role:        common.RoleAdminUser,
+		FromRunner:  true,
+		IncidentKey: fmt.Sprintf("%d:%d:%s", agent.Id, hookId, eventName),
 	}
 	authz.MarkHostingAgentUser(agent.UserId)
 	tools := brainTools(ctx)
@@ -58,22 +61,15 @@ func RunAgentTurn(agent *model.HostingAgent, hookSummary string, hookId int, eve
 			_, _ = Handoff(agent, hookSummary, "daily token budget exceeded mid-loop", hookId, eventName)
 			return
 		}
-		view := TransformContext(messages)
+		extra := ContextExtra{
+			Snapshot: SnapshotForPrompt(),
+			Skill:    SkillForMessages(messages),
+		}
+		view := TransformContext(messages, extra)
 		if NeedsCompaction(view, agent) {
 			summary := compactWithBrain(agent, view)
 			view = CompactMessages(agent, view, summary)
-			agent.LastCompactSummary = summary
-			_ = model.DB.Model(agent).Updates(map[string]any{
-				"last_compact_summary": summary,
-				"updated_at":           common.GetTimestamp(),
-			}).Error
-			_ = model.AppendHostingSessionEntry(&model.HostingSessionEntry{
-				AgentId:    agent.Id,
-				SessionId:  agent.SessionId,
-				Role:       compactRole,
-				Content:    FormatCompactRecord(summary),
-				TokenCount: EstimateTokens(summary),
-			})
+			persistCompaction(agent, summary)
 		}
 		req := BrainRequest{
 			Model:    agent.BrainModel,
@@ -84,12 +80,21 @@ func RunAgentTurn(agent *model.HostingAgent, hookSummary string, hookId int, eve
 		if LooksLikeContextOverflow(err, resp) {
 			summary := compactWithBrain(agent, view)
 			view = CompactMessages(agent, view, summary)
+			persistCompaction(agent, summary)
 			req.Messages = prependSystem(view)
 			resp, err = ChatWithBrain(agent, req)
+			if LooksLikeContextOverflow(err, resp) {
+				_, _ = Handoff(agent, hookSummary, "context overflow after compaction", hookId, eventName)
+				return
+			}
 		}
 		if err != nil {
 			_ = model.AddHostingBrainUsage(agent.Id, 0, 0, 0, 1)
-			_, _ = Handoff(agent, hookSummary, "brain call failed: "+err.Error(), hookId, eventName)
+			reason := "brain call failed: " + err.Error()
+			if agent.BrainSource == constant.HostingBrainDedicated {
+				reason = "dedicated brain failed: " + err.Error()
+			}
+			_, _ = Handoff(agent, hookSummary, reason, hookId, eventName)
 			return
 		}
 		if resp != nil {
@@ -120,8 +125,9 @@ func RunAgentTurn(agent *model.HostingAgent, hookSummary string, hookId int, eve
 			content := ""
 			if toolErr != nil {
 				content = "error: " + toolErr.Error()
-				if strings.Contains(toolErr.Error(), "brain channel") {
+				if IsToolHandoff(toolErr) {
 					_, _ = Handoff(agent, hookSummary, toolErr.Error(), hookId, eventName)
+					return
 				}
 			} else {
 				raw, _ := common.Marshal(result)
@@ -141,6 +147,21 @@ func RunAgentTurn(agent *model.HostingAgent, hookSummary string, hookId int, eve
 		}
 	}
 	_, _ = Handoff(agent, hookSummary, "action budget exhausted", hookId, eventName)
+}
+
+func persistCompaction(agent *model.HostingAgent, summary string) {
+	agent.LastCompactSummary = summary
+	_ = model.DB.Model(agent).Updates(map[string]any{
+		"last_compact_summary": summary,
+		"updated_at":           common.GetTimestamp(),
+	}).Error
+	_ = model.AppendHostingSessionEntry(&model.HostingSessionEntry{
+		AgentId:    agent.Id,
+		SessionId:  agent.SessionId,
+		Role:       compactRole,
+		Content:    FormatCompactRecord(summary),
+		TokenCount: EstimateTokens(summary),
+	})
 }
 
 func loadSessionMessages(agent *model.HostingAgent) []BrainMessage {
@@ -237,4 +258,21 @@ func SessionTimeline(agentId int, sessionId string) ([]*model.HostingSessionEntr
 		sessionId = agent.SessionId
 	}
 	return model.ListHostingSessionEntries(agentId, sessionId, 0, 500)
+}
+
+func ExportSession(agentId int, sessionId string) (string, error) {
+	entries, err := SessionTimeline(agentId, sessionId)
+	if err != nil {
+		return "", err
+	}
+	raw, err := common.Marshal(entries)
+	if err != nil {
+		return "", err
+	}
+	return string(raw), nil
+}
+
+func IsToolHandoff(err error) bool {
+	var target *ToolHandoffError
+	return errors.As(err, &target)
 }

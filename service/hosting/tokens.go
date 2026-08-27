@@ -42,10 +42,21 @@ func IssueAgentToken(agentId int, name, allowIPs string) (*IssuedToken, error) {
 }
 
 func RotateAgentToken(agentId, tokenId int, allowIPs string) (*IssuedToken, error) {
+	existing, err := model.GetHostingTokenById(tokenId, agentId)
+	if err != nil {
+		return nil, err
+	}
+	if strings.TrimSpace(allowIPs) == "" {
+		allowIPs = existing.AllowIPs
+	}
 	if err := model.RevokeHostingToken(tokenId, agentId); err != nil {
 		return nil, err
 	}
-	return IssueAgentToken(agentId, "rotated", allowIPs)
+	name := "rotated"
+	if existing.Name != "" {
+		name = existing.Name
+	}
+	return IssueAgentToken(agentId, name, allowIPs)
 }
 
 func AuthenticateAgentToken(secret, clientIP string) (*model.HostingAgent, *model.HostingAgentToken, error) {

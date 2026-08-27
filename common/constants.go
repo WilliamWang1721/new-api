@@ -25,6 +25,13 @@ var DisplayInCurrencyEnabled = true
 var DisplayTokenStatEnabled = true
 var DrawingEnabled = true
 var TaskEnabled = true
+
+// HostingEnabled is the panel kill switch. Combined with HOSTING_ENABLED env.
+var HostingEnabled = true
+
+// NotifyHostingEnabledChanged is set by the hosting package so option updates
+// can enable or disable the subsystem without importing it from model.
+var NotifyHostingEnabledChanged func()
 var DataExportEnabled = true
 var DataExportInterval = 5         // unit: minute
 var DataExportDefaultTime = "hour" // unit: minute

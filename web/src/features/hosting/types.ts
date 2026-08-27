@@ -33,6 +33,7 @@ export type HostingAgent = {
   dedicated_base_url: string
   dedicated_api_type: string
   dedicated_timeout_sec: number
+  dedicated_headers: string
   default_channel_groups: string
   max_actions_per_incident: number
   dry_run: boolean
@@ -66,6 +67,8 @@ export type HostingIncident = {
   source_event: string
   summary: string
   handoff_reason: string
+  actions_json?: string
+  brain_source?: string
   created_at: number
 }
 
@@ -93,11 +96,27 @@ export type HostingSessionEntry = {
   token_count: number
 }
 
+export type HostingToken = {
+  id: number
+  name: string
+  token_prefix: string
+  allow_ips: string
+  status: number
+}
+
+export type HostingSessionPayload = {
+  entries: HostingSessionEntry[]
+  session_id: string
+  last_compact_summary: string
+}
+
 export type HostingStatus = {
   status: {
     enabled: boolean
     state: HostingRuntimeState
     error?: string
+    env_enabled?: boolean
+    panel_enabled?: boolean
   }
   snapshot: {
     hosting: string
@@ -107,6 +126,8 @@ export type HostingStatus = {
       content: string
       channel_id: number
     }>
+    inspection_tasks?: Record<string, { status: string; updated_at: number }>
+    host_resources?: { alloc_mb: number }
   }
   template: AdminPermissionMatrix
 }

@@ -199,6 +199,31 @@ export function AgentEditorDialog(props: AgentEditorDialogProps) {
                   }
                 />
               </div>
+              <div className='grid gap-1'>
+                <Label>{t('API type')}</Label>
+                <Input
+                  value={props.form.dedicated_api_type}
+                  onChange={(event) =>
+                    props.onFormChange({
+                      ...props.form,
+                      dedicated_api_type: event.target.value,
+                    })
+                  }
+                />
+              </div>
+              <div className='grid gap-1'>
+                <Label>{t('Extra headers')}</Label>
+                <Textarea
+                  value={props.form.dedicated_headers}
+                  placeholder={t('JSON object or Header: value lines')}
+                  onChange={(event) =>
+                    props.onFormChange({
+                      ...props.form,
+                      dedicated_headers: event.target.value,
+                    })
+                  }
+                />
+              </div>
               <Button
                 type='button'
                 variant='outline'
@@ -207,6 +232,9 @@ export function AgentEditorDialog(props: AgentEditorDialogProps) {
                     base_url: props.form.dedicated_base_url,
                     api_key: props.form.dedicated_api_key,
                     model: props.form.brain_model,
+                    extra_headers: props.form.dedicated_headers,
+                    api_type: props.form.dedicated_api_type,
+                    timeout_sec: props.form.dedicated_timeout_sec,
                   })
                   if (res.data?.ok) {
                     toast.success(t('Brain connectivity test succeeded'))
@@ -359,15 +387,32 @@ export function AgentEditorDialog(props: AgentEditorDialogProps) {
             />
           </div>
           {!props.editing ? (
-            <div className='flex items-center justify-between'>
-              <Label>{t('Issue token on create')}</Label>
-              <Switch
-                checked={props.form.issue_token}
-                onCheckedChange={(checked) =>
-                  props.onFormChange({ ...props.form, issue_token: checked })
-                }
-              />
-            </div>
+            <>
+              <div className='flex items-center justify-between'>
+                <Label>{t('Issue token on create')}</Label>
+                <Switch
+                  checked={props.form.issue_token}
+                  onCheckedChange={(checked) =>
+                    props.onFormChange({ ...props.form, issue_token: checked })
+                  }
+                />
+              </div>
+              {props.form.issue_token ? (
+                <div className='grid gap-1'>
+                  <Label>{t('Token IP allowlist')}</Label>
+                  <Input
+                    value={props.form.token_allow_ips}
+                    placeholder={t('Optional comma-separated IPs or CIDRs')}
+                    onChange={(event) =>
+                      props.onFormChange({
+                        ...props.form,
+                        token_allow_ips: event.target.value,
+                      })
+                    }
+                  />
+                </div>
+              ) : null}
+            </>
           ) : null}
           <Button
             type='button'

@@ -5,12 +5,15 @@ import (
 	"strings"
 	"unicode/utf8"
 
+	"github.com/QuantumNous/new-api/common"
 	"github.com/QuantumNous/new-api/model"
 )
 
 const (
 	maxToolResultChars = 8000
 	compactRole        = "compaction"
+	snapshotMarker     = "[RUNTIME SNAPSHOT]"
+	skillMarker        = "[SKILL]"
 )
 
 func EstimateTokens(text string) int {
@@ -25,8 +28,29 @@ func EstimateTokens(text string) int {
 	return tokens
 }
 
-func TransformContext(messages []BrainMessage) []BrainMessage {
-	out := make([]BrainMessage, 0, len(messages))
+type ContextExtra struct {
+	Snapshot string
+	Skill    string
+}
+
+func TransformContext(messages []BrainMessage, extras ...ContextExtra) []BrainMessage {
+	out := make([]BrainMessage, 0, len(messages)+2)
+	var extra ContextExtra
+	if len(extras) > 0 {
+		extra = extras[0]
+	}
+	if strings.TrimSpace(extra.Snapshot) != "" && !hasMarker(messages, snapshotMarker) {
+		out = append(out, BrainMessage{
+			Role:    "user",
+			Content: snapshotMarker + "\n" + extra.Snapshot,
+		})
+	}
+	if strings.TrimSpace(extra.Skill) != "" && !hasMarker(messages, skillMarker) {
+		out = append(out, BrainMessage{
+			Role:    "user",
+			Content: skillMarker + "\n" + extra.Skill,
+		})
+	}
 	for _, msg := range messages {
 		if msg.Role == "tool" && utf8.RuneCountInString(msg.Content) > maxToolResultChars {
 			msg.Content = truncateRunes(msg.Content, maxToolResultChars) + "\n[truncated tool result]"
@@ -34,6 +58,37 @@ func TransformContext(messages []BrainMessage) []BrainMessage {
 		out = append(out, msg)
 	}
 	return out
+}
+
+func hasMarker(messages []BrainMessage, marker string) bool {
+	for _, msg := range messages {
+		if strings.Contains(msg.Content, marker) {
+			return true
+		}
+	}
+	return false
+}
+
+func SkillForMessages(messages []BrainMessage) string {
+	blob := strings.Builder{}
+	start := 0
+	if len(messages) > 6 {
+		start = len(messages) - 6
+	}
+	for _, msg := range messages[start:] {
+		if msg.Role == "user" || msg.Role == "tool" {
+			blob.WriteString(strings.ToLower(msg.Content))
+			blob.WriteByte('\n')
+		}
+	}
+	text := blob.String()
+	if strings.Contains(text, "channel.auto_disabled") || strings.Contains(text, "auto-disabled") || strings.Contains(text, "auto_disabled") {
+		return "Skill: channel auto-disable playbook. Fill empty channel groups, probe keys, disable bad multi-keys, re-enable if healthy. Never change the current brain channel. Hand off if still failing."
+	}
+	if strings.Contains(text, "quota.exhausted") || strings.Contains(text, "quota") {
+		return "Skill: quota alarm. Do not attempt payment or recharge. Summarize the affected user and hand off."
+	}
+	return ""
 }
 
 func truncateRunes(s string, max int) string {
@@ -144,4 +199,12 @@ func LooksLikeContextOverflow(err error, resp *BrainResponse) bool {
 
 func FormatCompactRecord(summary string) string {
 	return fmt.Sprintf("compacted:\n%s", summary)
+}
+
+func SnapshotForPrompt() string {
+	raw, err := common.Marshal(RuntimeSnapshot())
+	if err != nil {
+		return "hosting snapshot unavailable"
+	}
+	return truncateRunes(string(raw), 1200)
 }

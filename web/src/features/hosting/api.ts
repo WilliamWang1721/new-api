@@ -28,8 +28,9 @@ import type {
   HostingCreateResult,
   HostingHook,
   HostingIncident,
-  HostingSessionEntry,
+  HostingSessionPayload,
   HostingStatus,
+  HostingToken,
 } from './types'
 
 export async function getHostingStatus() {
@@ -82,11 +83,50 @@ export async function createHostingAgentToken(
   return res.data
 }
 
+export async function listHostingAgentTokens(id: number) {
+  const res = await api.get<HostingApiResponse<HostingToken[]>>(
+    `/api/hosting/admin/agents/${id}/tokens`
+  )
+  return res.data
+}
+
+export async function rotateHostingAgentToken(
+  id: number,
+  tokenId: number,
+  payload: { allow_ips?: string } = {}
+) {
+  const res = await api.post<
+    HostingApiResponse<{ secret: string; token: HostingToken }>
+  >(`/api/hosting/admin/agents/${id}/tokens/${tokenId}/rotate`, payload)
+  return res.data
+}
+
+export async function revokeHostingAgentToken(id: number, tokenId: number) {
+  const res = await api.delete<HostingApiResponse<null>>(
+    `/api/hosting/admin/agents/${id}/tokens/${tokenId}`
+  )
+  return res.data
+}
+
+export async function setHostingPanelEnabled(enabled: boolean) {
+  const res = await api.put<
+    HostingApiResponse<{
+      enabled: boolean
+      state: string
+      env_enabled: boolean
+      panel_enabled: boolean
+    }>
+  >('/api/hosting/admin/enabled', { enabled })
+  return res.data
+}
+
 export async function testHostingBrain(payload: {
   base_url: string
   api_key: string
   model: string
   timeout_sec?: number
+  extra_headers?: string
+  api_type?: string
 }) {
   const res = await api.post<
     HostingApiResponse<{ ok: boolean; message: string }>
@@ -127,9 +167,23 @@ export async function updateHostingHook(
   return res.data
 }
 
+export async function deleteHostingHook(id: number) {
+  const res = await api.delete<HostingApiResponse<null>>(
+    `/api/hosting/admin/hooks/${id}`
+  )
+  return res.data
+}
+
 export async function getHostingSession(id: number) {
-  const res = await api.get<HostingApiResponse<HostingSessionEntry[]>>(
+  const res = await api.get<HostingApiResponse<HostingSessionPayload>>(
     `/api/hosting/admin/agents/${id}/session`
+  )
+  return res.data
+}
+
+export async function exportHostingSession(id: number) {
+  const res = await api.get<HostingApiResponse<{ export: string }>>(
+    `/api/hosting/admin/agents/${id}/session/export`
   )
   return res.data
 }

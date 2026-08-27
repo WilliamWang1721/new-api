@@ -7,9 +7,11 @@ import (
 )
 
 type Runtime struct {
-	Enabled bool   `json:"enabled"`
-	State   string `json:"state"`
-	Error   string `json:"error,omitempty"`
+	Enabled      bool   `json:"enabled"`
+	State        string `json:"state"`
+	Error        string `json:"error,omitempty"`
+	EnvEnabled   bool   `json:"env_enabled"`
+	PanelEnabled bool   `json:"panel_enabled"`
 }
 
 var (
@@ -23,6 +25,8 @@ func setRuntime(state, errMsg string) {
 	runtime.State = state
 	runtime.Error = errMsg
 	runtime.Enabled = state == constant.HostingStatusReady
+	runtime.EnvEnabled = EnvEnabled()
+	runtime.PanelEnabled = PanelEnabled()
 }
 
 func GetPublicStatus() string {
@@ -38,11 +42,13 @@ func GetRuntime() Runtime {
 	runtimeMu.RLock()
 	defer runtimeMu.RUnlock()
 	copy := runtime
+	copy.EnvEnabled = EnvEnabled()
+	copy.PanelEnabled = PanelEnabled()
 	return copy
 }
 
 func IsReady() bool {
 	runtimeMu.RLock()
 	defer runtimeMu.RUnlock()
-	return runtime.Enabled && runtime.State == constant.HostingStatusReady
+	return runtime.Enabled && runtime.State == constant.HostingStatusReady && EnvEnabled() && PanelEnabled()
 }

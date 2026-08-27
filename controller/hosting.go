@@ -24,6 +24,25 @@ func GetHostingStatus(c *gin.Context) {
 	})
 }
 
+func SetHostingPanelEnabled(c *gin.Context) {
+	var req struct {
+		Enabled *bool `json:"enabled"`
+	}
+	if err := common.DecodeJson(c.Request.Body, &req); err != nil || req.Enabled == nil {
+		common.ApiErrorMsg(c, "enabled is required")
+		return
+	}
+	if !hosting.EnvEnabled() {
+		common.ApiErrorMsg(c, "hosting is disabled by HOSTING_ENABLED")
+		return
+	}
+	if err := model.UpdateOption("HostingEnabled", strconv.FormatBool(*req.Enabled)); err != nil {
+		common.ApiError(c, err)
+		return
+	}
+	common.ApiSuccess(c, hosting.GetRuntime())
+}
+
 func GetHostingAgents(c *gin.Context) {
 	agents, err := model.ListHostingAgents()
 	if err != nil {
@@ -156,7 +175,11 @@ func ListHostingAgentTokens(c *gin.Context) {
 func RotateHostingAgentToken(c *gin.Context) {
 	id, _ := strconv.Atoi(c.Param("id"))
 	tokenId, _ := strconv.Atoi(c.Param("token_id"))
-	issued, err := hosting.RotateAgentToken(id, tokenId, "")
+	var req struct {
+		AllowIPs string `json:"allow_ips"`
+	}
+	_ = common.DecodeJson(c.Request.Body, &req)
+	issued, err := hosting.RotateAgentToken(id, tokenId, req.AllowIPs)
 	if err != nil {
 		common.ApiError(c, err)
 		return
@@ -181,8 +204,11 @@ func TestHostingBrain(c *gin.Context) {
 		APIKey  string `json:"api_key"`
 		Model   string `json:"model"`
 		Timeout int    `json:"timeout_sec"`
+		Headers string `json:"extra_headers"`
+		APIType string `json:"api_type"`
 	}
 	_ = common.DecodeJson(c.Request.Body, &req)
+	extra := hosting.ParseExtraHeaders(req.Headers)
 	if req.APIKey == "" && id > 0 {
 		agent, err := model.GetHostingAgentById(id)
 		if err == nil && agent.DedicatedAPIKey != "" {
@@ -195,9 +221,15 @@ func TestHostingBrain(c *gin.Context) {
 			if req.Model == "" {
 				req.Model = agent.BrainModel
 			}
+			if req.Headers == "" {
+				extra = hosting.ParseExtraHeaders(agent.DedicatedHeaders)
+			}
+			if req.Timeout == 0 {
+				req.Timeout = agent.DedicatedTimeoutSec
+			}
 		}
 	}
-	ok, message := hosting.TestDedicatedBrain(req.BaseURL, req.APIKey, req.Model, req.Timeout)
+	ok, message := hosting.TestDedicatedBrain(req.BaseURL, req.APIKey, req.Model, req.Timeout, extra)
 	common.ApiSuccess(c, gin.H{"ok": ok, "message": message})
 }
 
@@ -273,7 +305,30 @@ func GetHostingSession(c *gin.Context) {
 		common.ApiError(c, err)
 		return
 	}
-	common.ApiSuccess(c, entries)
+	agent, _ := model.GetHostingAgentById(id)
+	summary := ""
+	sessionId := c.Query("session_id")
+	if agent != nil {
+		summary = agent.LastCompactSummary
+		if sessionId == "" {
+			sessionId = agent.SessionId
+		}
+	}
+	common.ApiSuccess(c, gin.H{
+		"entries":              entries,
+		"session_id":           sessionId,
+		"last_compact_summary": summary,
+	})
+}
+
+func ExportHostingSession(c *gin.Context) {
+	id, _ := strconv.Atoi(c.Param("id"))
+	raw, err := hosting.ExportSession(id, c.Query("session_id"))
+	if err != nil {
+		common.ApiError(c, err)
+		return
+	}
+	common.ApiSuccess(c, gin.H{"export": raw})
 }
 
 func GetHostingCost(c *gin.Context) {

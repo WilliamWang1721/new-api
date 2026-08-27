@@ -3,6 +3,7 @@ package router
 import (
 	"github.com/QuantumNous/new-api/controller"
 	"github.com/QuantumNous/new-api/middleware"
+	"github.com/QuantumNous/new-api/service/hosting"
 	"github.com/gin-gonic/gin"
 )
 
@@ -11,6 +12,7 @@ func registerHostingRoutes(apiRouter *gin.RouterGroup) {
 	admin.Use(middleware.RootAuth())
 	{
 		admin.GET("/status", controller.GetHostingStatus)
+		admin.PUT("/enabled", controller.SetHostingPanelEnabled)
 		admin.GET("/agents", controller.GetHostingAgents)
 		admin.GET("/agents/:id", controller.GetHostingAgent)
 		admin.POST("/agents", controller.CreateHostingAgent)
@@ -26,12 +28,17 @@ func registerHostingRoutes(apiRouter *gin.RouterGroup) {
 		admin.POST("/agents/:id/brain/test", controller.TestHostingBrain)
 		admin.POST("/brain/test", controller.TestHostingBrain)
 		admin.GET("/agents/:id/session", controller.GetHostingSession)
+		admin.GET("/agents/:id/session/export", controller.ExportHostingSession)
 		admin.GET("/agents/:id/cost", controller.GetHostingCost)
 		admin.GET("/incidents", controller.GetHostingIncidents)
 		admin.PUT("/incidents/:id", controller.UpdateHostingIncident)
 		admin.GET("/hooks", controller.GetHostingHooks)
 		admin.PUT("/hooks/:id", controller.UpdateHostingHook)
 		admin.DELETE("/hooks/:id", controller.DeleteHostingHook)
+	}
+
+	if !hosting.EnvEnabled() {
+		return
 	}
 
 	agent := apiRouter.Group("/hosting")

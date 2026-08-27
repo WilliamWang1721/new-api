@@ -283,10 +283,10 @@ func SetApiRouter(router *gin.Engine) {
 		systemTaskRoute := apiRouter.Group("/system-task")
 		systemTaskRoute.Use(middleware.RootAuth())
 		{
-			systemTaskRoute.POST("/log-cleanup", controller.CreateLogCleanupSystemTask)
-			systemTaskRoute.GET("/list", controller.ListSystemTasks)
-			systemTaskRoute.GET("/current", controller.GetCurrentSystemTask)
-			systemTaskRoute.GET("/:task_id", controller.GetSystemTask)
+			systemTaskRoute.POST("/log-cleanup", middleware.RequirePermission(authz.SystemTaskWrite), controller.CreateLogCleanupSystemTask)
+			systemTaskRoute.GET("/list", middleware.RequirePermission(authz.SystemTaskRead), controller.ListSystemTasks)
+			systemTaskRoute.GET("/current", middleware.RequirePermission(authz.SystemTaskRead), controller.GetCurrentSystemTask)
+			systemTaskRoute.GET("/:task_id", middleware.RequirePermission(authz.SystemTaskRead), controller.GetSystemTask)
 		}
 		systemInfoRoute := apiRouter.Group("/system-info")
 		systemInfoRoute.Use(middleware.RootAuth())

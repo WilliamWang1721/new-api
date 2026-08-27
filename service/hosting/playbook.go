@@ -23,19 +23,65 @@ func RunPlaybook(agent *model.HostingAgent, hook *model.HostingHook, event servi
 	}
 	if event.Name == "channel.auto_disabled" && event.ChannelId > 0 {
 		channel, err := model.GetChannelById(event.ChannelId, true)
-		if err == nil && strings.TrimSpace(channel.Group) != "" {
-			ok, message := ProbeChannel(channel)
-			actions = append(actions, "probed channel: "+message)
-			if ok {
-				if model.UpdateChannelStatus(channel.Id, "", common.ChannelStatusEnabled, "hosting playbook probe succeeded") {
-					actions = append(actions, fmt.Sprintf("re-enabled channel #%d", channel.Id))
-					return true, actions
-				}
-			}
+		if err != nil {
+			return false, actions
 		}
+		if strings.TrimSpace(channel.Group) == "" {
+			return false, actions
+		}
+		ok, extra := repairAutoDisabledChannel(channel, ProbeChannelKey)
+		actions = append(actions, extra...)
+		return ok, actions
 	}
 	if len(actions) > 0 && event.Name != "channel.auto_disabled" {
 		return true, actions
+	}
+	return false, actions
+}
+
+type keyProbeFunc func(channel *model.Channel, key string) (bool, string)
+
+func UnhealthyKeyIndexes(keys []string, healthy func(string) bool) []int {
+	out := make([]int, 0)
+	for i, key := range keys {
+		if !healthy(key) {
+			out = append(out, i)
+		}
+	}
+	return out
+}
+
+func repairAutoDisabledChannel(channel *model.Channel, probe keyProbeFunc) (bool, []string) {
+	var actions []string
+	if channel.ChannelInfo.IsMultiKey {
+		keys := channel.GetKeys()
+		healthy := 0
+		for i, key := range keys {
+			ok, message := probe(channel, key)
+			if ok {
+				healthy++
+				continue
+			}
+			reason := "hosting playbook: " + message
+			if model.UpdateChannelStatus(channel.Id, key, common.ChannelStatusAutoDisabled, reason) {
+				actions = append(actions, fmt.Sprintf("disabled unhealthy key #%d: %s", i, message))
+			}
+		}
+		if healthy > 0 {
+			if model.UpdateChannelStatus(channel.Id, "", common.ChannelStatusEnabled, "hosting playbook kept healthy keys") {
+				actions = append(actions, fmt.Sprintf("re-enabled channel #%d with %d healthy keys", channel.Id, healthy))
+				return true, actions
+			}
+		}
+		return false, actions
+	}
+	ok, message := ProbeChannel(channel)
+	actions = append(actions, "probed channel: "+message)
+	if ok {
+		if model.UpdateChannelStatus(channel.Id, "", common.ChannelStatusEnabled, "hosting playbook probe succeeded") {
+			actions = append(actions, fmt.Sprintf("re-enabled channel #%d", channel.Id))
+			return true, actions
+		}
 	}
 	return false, actions
 }

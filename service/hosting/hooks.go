@@ -2,6 +2,7 @@ package hosting
 
 import (
 	"fmt"
+	goruntime "runtime"
 	"strings"
 	"sync"
 	"time"
@@ -19,6 +20,7 @@ var (
 	followups   = map[int][]string{}
 	runningWake = map[int]bool{}
 	agentLocks  sync.Map
+	wakeSlots   = make(chan struct{}, constant.HostingMaxConcurrentWakes)
 )
 
 func agentLock(id int) *sync.Mutex {
@@ -51,6 +53,18 @@ func seedSystemHooks() error {
 			MergeKey:    "quota.exhausted",
 			PromptHint:  "A quota alarm fired. Do not wake the model; notify the handoff contact.",
 			SystemKey:   "sys_quota_exhausted",
+		},
+		{
+			Owner:       constant.HostingHookOwnerSystem,
+			Name:        "Channel test failed",
+			Enabled:     true,
+			Kind:        constant.HostingHookKindEvent,
+			EventName:   constant.HostingEventChannelTest,
+			WakeMode:    constant.HostingWakeNotifyOnly,
+			CooldownSec: 300,
+			MergeKey:    "channel.test_failed",
+			PromptHint:  "A scheduled channel test failed. Inspect within granted tools or hand off.",
+			SystemKey:   "sys_channel_test_failed",
 		},
 	}
 	now := common.GetTimestamp()
@@ -133,6 +147,8 @@ func matchCondition(hook *model.HostingHook) bool {
 		}
 		_ = model.LOG_DB.Model(&model.Log{}).Where("type = ? AND created_at >= ?", model.LogTypeError, common.GetTimestamp()-window).Count(&count).Error
 		return int(count) >= n
+	case "host_alloc_mb":
+		return hostAllocMB() >= n
 	default:
 		return false
 	}
@@ -198,25 +214,36 @@ func dispatchHook(agent *model.HostingAgent, hook *model.HostingHook, event serv
 		return
 	}
 
+	if !tryAcquireWakeSlot() {
+		wakeMu.Lock()
+		followups[agent.Id] = append(followups[agent.Id], summary)
+		wakeMu.Unlock()
+		return
+	}
+
 	wakeMu.Lock()
 	if runningWake[agent.Id] {
 		followups[agent.Id] = append(followups[agent.Id], summary)
 		wakeMu.Unlock()
+		releaseWakeSlot()
 		return
 	}
 	now := time.Now()
 	if last := lastWakeAt[agent.Id]; !last.IsZero() && now.Sub(last) < time.Duration(agent.WakeMergeWindowSec)*time.Second {
 		followups[agent.Id] = append(followups[agent.Id], summary)
 		wakeMu.Unlock()
+		releaseWakeSlot()
 		return
 	}
 	if !allowHourlyWake(agent, now) {
 		wakeMu.Unlock()
+		releaseWakeSlot()
 		_, _ = Handoff(agent, summary, "hourly wake budget exceeded", hook.Id, event.Name)
 		return
 	}
 	if overDailyBudget(agent) {
 		wakeMu.Unlock()
+		releaseWakeSlot()
 		_, _ = Handoff(agent, summary, "daily token budget exceeded", hook.Id, event.Name)
 		return
 	}
@@ -233,21 +260,28 @@ func dispatchHook(agent *model.HostingAgent, hook *model.HostingHook, event serv
 			}
 			wakeMu.Lock()
 			runningWake[agent.Id] = false
-			more := followups[agent.Id]
-			followups[agent.Id] = nil
 			wakeMu.Unlock()
-			if len(more) > 0 && IsReady() {
-				fresh, err := model.GetHostingAgentById(agent.Id)
-				if err == nil {
-					RunAgentTurn(fresh, strings.Join(more, "\n"), hook.Id, event.Name)
-				}
-			}
+			releaseWakeSlot()
 		}()
 		prompt := summary
 		if len(queued) > 0 {
 			prompt += "\n" + strings.Join(queued, "\n")
 		}
 		RunAgentTurn(agent, prompt, hook.Id, event.Name)
+		for IsReady() {
+			wakeMu.Lock()
+			more := followups[agent.Id]
+			followups[agent.Id] = nil
+			wakeMu.Unlock()
+			if len(more) == 0 {
+				return
+			}
+			fresh, err := model.GetHostingAgentById(agent.Id)
+			if err != nil {
+				return
+			}
+			RunAgentTurn(fresh, strings.Join(more, "\n"), hook.Id, event.Name)
+		}
 	}()
 }
 
@@ -324,7 +358,7 @@ func CreateAgentHook(agent *model.HostingAgent, args map[string]any) (*model.Hos
 	}
 	if kind == constant.HostingHookKindCondition {
 		cond := strings.TrimSpace(argString(args, "condition"))
-		if cond != "auto_disabled_count" && cond != "error_logs_in_window" {
+		if cond != "auto_disabled_count" && cond != "error_logs_in_window" && cond != "host_alloc_mb" {
 			return nil, fmt.Errorf("condition is not in the allowlist")
 		}
 	}
@@ -356,6 +390,11 @@ func CreateAgentHook(agent *model.HostingAgent, args map[string]any) (*model.Hos
 	if err := hook.Insert(); err != nil {
 		return nil, err
 	}
+	auditHostingAction(agent.UserId, "", constant.HostingAuthMethod, "hosting.hook.create", map[string]any{
+		"hook_id": hook.Id,
+		"name":    hook.Name,
+		"kind":    hook.Kind,
+	})
 	return hook, nil
 }
 
@@ -393,6 +432,9 @@ func UpdateAgentHook(agent *model.HostingAgent, id int, args map[string]any) (*m
 	if err := model.DB.Model(hook).Updates(updates).Error; err != nil {
 		return nil, err
 	}
+	auditHostingAction(agent.UserId, "", constant.HostingAuthMethod, "hosting.hook.update", map[string]any{
+		"hook_id": id,
+	})
 	return model.GetHostingHookById(id)
 }
 
@@ -404,7 +446,13 @@ func DeleteAgentHook(agent *model.HostingAgent, id int) error {
 	if hook.Owner != constant.HostingHookOwnerAgent || hook.AgentId != agent.Id {
 		return fmt.Errorf("cannot delete this hook")
 	}
-	return model.DeleteHostingHook(id)
+	if err := model.DeleteHostingHook(id); err != nil {
+		return err
+	}
+	auditHostingAction(agent.UserId, "", constant.HostingAuthMethod, "hosting.hook.delete", map[string]any{
+		"hook_id": id,
+	})
+	return nil
 }
 
 func AdminUpdateHook(id int, enabled *bool, wakeMode string) (*model.HostingHook, error) {
@@ -434,4 +482,37 @@ func AdminDeleteHook(id int) error {
 		return fmt.Errorf("system hooks cannot be deleted")
 	}
 	return model.DeleteHostingHook(id)
+}
+
+func tryAcquireWakeSlot() bool {
+	select {
+	case wakeSlots <- struct{}{}:
+		return true
+	default:
+		return false
+	}
+}
+
+func releaseWakeSlot() {
+	select {
+	case <-wakeSlots:
+	default:
+	}
+}
+
+func hostAllocMB() int {
+	var ms goruntime.MemStats
+	goruntime.ReadMemStats(&ms)
+	return int(ms.Alloc / (1024 * 1024))
+}
+
+func auditHostingAction(userId int, ip, authMethod, action string, params map[string]any) {
+	if params == nil {
+		params = map[string]any{}
+	}
+	adminInfo := map[string]any{
+		"admin_id":    userId,
+		"auth_method": authMethod,
+	}
+	model.RecordOperationAuditLog(userId, action, ip, action, params, adminInfo, params)
 }

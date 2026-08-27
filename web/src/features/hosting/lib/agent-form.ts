@@ -28,7 +28,10 @@ export type HostingAgentForm = {
   brain_channel_id: number
   dedicated_base_url: string
   dedicated_api_key: string
+  dedicated_api_type: string
+  dedicated_headers: string
   dedicated_timeout_sec: number
+  token_allow_ips: string
   default_channel_groups: string
   daily_token_budget: number
   wake_merge_window_sec: number
@@ -53,7 +56,10 @@ export const EMPTY_HOSTING_AGENT_FORM: HostingAgentForm = {
   brain_channel_id: 0,
   dedicated_base_url: '',
   dedicated_api_key: '',
+  dedicated_api_type: 'openai',
+  dedicated_headers: '',
   dedicated_timeout_sec: 60,
+  token_allow_ips: '',
   default_channel_groups: 'default',
   daily_token_budget: 200000,
   wake_merge_window_sec: 60,
@@ -80,6 +86,8 @@ export function formFromAgent(agent: HostingAgent): HostingAgentForm {
     brain_channel_id: agent.brain_channel_id,
     dedicated_base_url: agent.dedicated_base_url,
     dedicated_api_key: '',
+    dedicated_api_type: agent.dedicated_api_type || 'openai',
+    dedicated_headers: agent.dedicated_headers || '',
     dedicated_timeout_sec: agent.dedicated_timeout_sec,
     default_channel_groups: agent.default_channel_groups,
     daily_token_budget: agent.daily_token_budget,

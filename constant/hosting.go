@@ -37,6 +37,10 @@ const (
 	HostingEventChannelEnabled  = "channel.auto_enabled"
 	HostingEventChannelTest     = "channel.test_failed"
 	HostingEventQuota           = "quota.exhausted"
+	HostingEventHostResource    = "host.resource_threshold"
+
+	HostingMaxConcurrentWakes         = 4
+	HostingMaxToolCallsPerIncidentMin = 20
 
 	DefaultHostingChannelGroups = "default"
 	DefaultHostingContextWindow = 128000

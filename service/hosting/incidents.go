@@ -2,6 +2,7 @@ package hosting
 
 import (
 	"fmt"
+	"strings"
 	"time"
 
 	"github.com/QuantumNous/new-api/common"
@@ -19,6 +20,7 @@ func CreateIncident(agent *model.HostingAgent, status string, hookId int, event,
 		SourceEvent:  event,
 		Summary:      summary,
 		ActionsJSON:  actions,
+		BrainSource:  agent.BrainSource,
 	}
 	if agent.HandoffUserId > 0 {
 		item.AssigneeUserId = agent.HandoffUserId
@@ -36,11 +38,15 @@ func Handoff(agent *model.HostingAgent, summary, reason string, hookId int, even
 	if reason == "" {
 		reason = "unspecified"
 	}
+	if agent != nil && agent.BrainSource == constant.HostingBrainDedicated && !strings.Contains(reason, "dedicated") {
+		reason = "dedicated: " + reason
+	}
 	item, err := CreateIncident(agent, constant.HostingIncidentHandedOff, hookId, event, summary, "")
 	if err != nil {
 		return nil, err
 	}
 	item.HandoffReason = reason
+	item.BrainSource = agent.BrainSource
 	_ = item.Update()
 	notifyHandoff(agent, summary, reason)
 	return item, nil
@@ -65,7 +71,7 @@ func ResolveIncident(id int, status string) (*model.HostingIncident, error) {
 
 func notifyHandoff(agent *model.HostingAgent, summary, reason string) {
 	subject := fmt.Sprintf("Hosting handoff: %s", agent.Name)
-	content := fmt.Sprintf("Agent %s (#%d) handed off an incident.\nReason: %s\nSummary: %s", agent.Name, agent.Id, reason, summary)
+	content := fmt.Sprintf("Agent %s (#%d) handed off an incident.\nBrain: %s\nReason: %s\nSummary: %s", agent.Name, agent.Id, agent.BrainSource, reason, summary)
 	userId := agent.HandoffUserId
 	if userId <= 0 {
 		service.NotifyRootUser(dto.NotifyTypeHostingHandoff, subject, content)

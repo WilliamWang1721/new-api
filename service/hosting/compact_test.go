@@ -53,8 +53,18 @@ func TestCompactMessagesInsertsSummary(t *testing.T) {
 	assert.Contains(t, out[0].Content, "COMPACTION")
 }
 
-func TestLooksLikeContextOverflow(t *testing.T) {
-	assert.True(t, LooksLikeContextOverflow(errors.New("context length exceeded"), nil))
+func TestTransformContextInjectsSnapshotAndSkill(t *testing.T) {
+	out := TransformContext([]BrainMessage{{Role: "user", Content: "hello"}}, ContextExtra{
+		Snapshot: `{"auto_disabled_count":2}`,
+		Skill:    "Skill: channel auto-disable playbook.",
+	})
+	require.GreaterOrEqual(t, len(out), 3)
+	assert.Contains(t, out[0].Content, snapshotMarker)
+	assert.Contains(t, out[1].Content, skillMarker)
+}
+
+func TestLooksLikeContextOverflowAfterCompactStillDetected(t *testing.T) {
+	assert.True(t, LooksLikeContextOverflow(errors.New("maximum context length"), &BrainResponse{RawError: "too long"}))
 	assert.False(t, LooksLikeContextOverflow(errors.New("upstream timeout"), nil))
 }
 

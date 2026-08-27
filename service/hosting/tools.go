@@ -14,12 +14,14 @@ import (
 )
 
 type ToolContext struct {
-	Agent     *model.HostingAgent
-	UserID    int
-	Role      int
-	TokenID   int
-	ClientIP  string
-	Terminate bool
+	Agent       *model.HostingAgent
+	UserID      int
+	Role        int
+	TokenID     int
+	ClientIP    string
+	Terminate   bool
+	FromRunner  bool
+	IncidentKey string
 }
 
 type ToolSpec struct {
@@ -35,9 +37,10 @@ type ToolSpec struct {
 type ToolRateLimit struct {
 	mu     sync.Mutex
 	window map[int][]time.Time
+	inc    map[string][]time.Time
 }
 
-var toolRate = &ToolRateLimit{window: map[int][]time.Time{}}
+var toolRate = &ToolRateLimit{window: map[int][]time.Time{}, inc: map[string][]time.Time{}}
 
 const maxToolCallsPerMinute = 60
 
@@ -57,6 +60,31 @@ func (r *ToolRateLimit) Allow(agentId int) bool {
 		return false
 	}
 	r.window[agentId] = append(kept, now)
+	return true
+}
+
+func (r *ToolRateLimit) AllowIncident(key string) bool {
+	if key == "" {
+		return true
+	}
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	if r.inc == nil {
+		r.inc = map[string][]time.Time{}
+	}
+	now := time.Now()
+	cutoff := now.Add(-time.Minute)
+	kept := r.inc[key][:0]
+	for _, ts := range r.inc[key] {
+		if ts.After(cutoff) {
+			kept = append(kept, ts)
+		}
+	}
+	if len(kept) >= constant.HostingMaxToolCallsPerIncidentMin {
+		r.inc[key] = kept
+		return false
+	}
+	r.inc[key] = append(kept, now)
 	return true
 }
 
@@ -246,6 +274,198 @@ func allTools() []*ToolSpec {
 			Handler:     toolListGroups,
 		},
 		{
+			Name:        "update_group_ratio",
+			Description: "Set the ratio for an existing routing group. Does not create payment settings.",
+			InputSchema: toolSchema(map[string]any{
+				"group": map[string]any{"type": "string"},
+				"ratio": map[string]any{"type": "number"},
+			}, "group", "ratio"),
+			Permission: &authz.GroupWrite,
+			Mutating:   true,
+			Handler:    toolUpdateGroupRatio,
+		},
+		{
+			Name:        "list_tokens",
+			Description: "List a user's API tokens without secrets.",
+			InputSchema: toolSchema(map[string]any{
+				"user_id":   map[string]any{"type": "integer"},
+				"page":      map[string]any{"type": "integer"},
+				"page_size": map[string]any{"type": "integer"},
+			}, "user_id"),
+			Permission: &authz.TokenRead,
+			Handler:    toolListTokens,
+		},
+		{
+			Name:        "get_token",
+			Description: "Get a user API token by id without the secret key.",
+			InputSchema: toolSchema(map[string]any{
+				"id":      map[string]any{"type": "integer"},
+				"user_id": map[string]any{"type": "integer"},
+			}, "id", "user_id"),
+			Permission: &authz.TokenRead,
+			Handler:    toolGetToken,
+		},
+		{
+			Name:        "create_token",
+			Description: "Create a user API token. The full key is never returned.",
+			InputSchema: toolSchema(map[string]any{
+				"user_id":         map[string]any{"type": "integer"},
+				"name":            map[string]any{"type": "string"},
+				"remain_quota":    map[string]any{"type": "integer"},
+				"unlimited_quota": map[string]any{"type": "boolean"},
+				"group":           map[string]any{"type": "string"},
+				"expired_time":    map[string]any{"type": "integer"},
+			}, "user_id", "name"),
+			Permission: &authz.TokenWrite,
+			Mutating:   true,
+			Handler:    toolCreateToken,
+		},
+		{
+			Name:        "update_token",
+			Description: "Update a user API token name, status, quota, group, or IP allow list. Never returns the secret.",
+			InputSchema: toolSchema(map[string]any{
+				"id":           map[string]any{"type": "integer"},
+				"user_id":      map[string]any{"type": "integer"},
+				"name":         map[string]any{"type": "string"},
+				"status":       map[string]any{"type": "integer"},
+				"remain_quota": map[string]any{"type": "integer"},
+				"group":        map[string]any{"type": "string"},
+				"allow_ips":    map[string]any{"type": "string"},
+			}, "id", "user_id"),
+			Permission: &authz.TokenWrite,
+			Mutating:   true,
+			Handler:    toolUpdateToken,
+		},
+		{
+			Name:        "update_user_status",
+			Description: "Enable or disable a non-root human user. Cannot target root or hosting agents.",
+			InputSchema: toolSchema(map[string]any{
+				"id":     map[string]any{"type": "integer"},
+				"status": map[string]any{"type": "integer"},
+			}, "id", "status"),
+			Permission: &authz.UserWrite,
+			Mutating:   true,
+			Handler:    toolUpdateUserStatus,
+		},
+		{
+			Name:        "add_user_quota",
+			Description: "Add wallet quota to a non-root human user. Cannot recharge via payment.",
+			InputSchema: toolSchema(map[string]any{
+				"id":    map[string]any{"type": "integer"},
+				"quota": map[string]any{"type": "integer"},
+			}, "id", "quota"),
+			Permission: &authz.UserWrite,
+			Mutating:   true,
+			Handler:    toolAddUserQuota,
+		},
+		{
+			Name:        "create_redemption",
+			Description: "Create redemption codes. Returns generated codes so a human can distribute them.",
+			InputSchema: toolSchema(map[string]any{
+				"name":         map[string]any{"type": "string"},
+				"quota":        map[string]any{"type": "integer"},
+				"count":        map[string]any{"type": "integer"},
+				"expired_time": map[string]any{"type": "integer"},
+			}, "name", "quota"),
+			Permission: &authz.RedemptionWrite,
+			Mutating:   true,
+			Handler:    toolCreateRedemption,
+		},
+		{
+			Name:        "update_redemption_status",
+			Description: "Enable or disable a redemption code.",
+			InputSchema: toolSchema(map[string]any{
+				"id":     map[string]any{"type": "integer"},
+				"status": map[string]any{"type": "integer"},
+			}, "id", "status"),
+			Permission: &authz.RedemptionWrite,
+			Mutating:   true,
+			Handler:    toolUpdateRedemptionStatus,
+		},
+		{
+			Name:        "list_subscription_plans",
+			Description: "List subscription plans.",
+			InputSchema: toolSchema(nil),
+			Permission:  &authz.SubscriptionRead,
+			Handler:     toolListSubscriptionPlans,
+		},
+		{
+			Name:        "list_user_subscriptions",
+			Description: "List a user's subscriptions.",
+			InputSchema: toolSchema(map[string]any{
+				"user_id": map[string]any{"type": "integer"},
+			}, "user_id"),
+			Permission: &authz.SubscriptionRead,
+			Handler:    toolListUserSubscriptions,
+		},
+		{
+			Name:        "set_subscription_plan_enabled",
+			Description: "Enable or disable a subscription plan. Does not change payment keys.",
+			InputSchema: toolSchema(map[string]any{
+				"id":      map[string]any{"type": "integer"},
+				"enabled": map[string]any{"type": "boolean"},
+			}, "id", "enabled"),
+			Permission: &authz.SubscriptionWrite,
+			Mutating:   true,
+			Handler:    toolSetSubscriptionPlanEnabled,
+		},
+		{
+			Name:        "list_vendors",
+			Description: "List vendors.",
+			InputSchema: toolSchema(map[string]any{
+				"page":      map[string]any{"type": "integer"},
+				"page_size": map[string]any{"type": "integer"},
+			}),
+			Permission: &authz.VendorRead,
+			Handler:    toolListVendors,
+		},
+		{
+			Name:        "get_vendor",
+			Description: "Get a vendor by id.",
+			InputSchema: toolSchema(map[string]any{"id": map[string]any{"type": "integer"}}, "id"),
+			Permission:  &authz.VendorRead,
+			Handler:     toolGetVendor,
+		},
+		{
+			Name:        "create_vendor",
+			Description: "Create a vendor record. Does not change payment settings.",
+			InputSchema: toolSchema(map[string]any{
+				"name":        map[string]any{"type": "string"},
+				"description": map[string]any{"type": "string"},
+				"icon":        map[string]any{"type": "string"},
+			}, "name"),
+			Permission: &authz.VendorWrite,
+			Mutating:   true,
+			Handler:    toolCreateVendor,
+		},
+		{
+			Name:        "list_model_meta",
+			Description: "List model metadata records.",
+			InputSchema: toolSchema(map[string]any{
+				"page":      map[string]any{"type": "integer"},
+				"page_size": map[string]any{"type": "integer"},
+				"keyword":   map[string]any{"type": "string"},
+			}),
+			Permission: &authz.ModelMetaRead,
+			Handler:    toolListModelMeta,
+		},
+		{
+			Name:        "get_model_meta",
+			Description: "Get a model metadata record by id.",
+			InputSchema: toolSchema(map[string]any{"id": map[string]any{"type": "integer"}}, "id"),
+			Permission:  &authz.ModelMetaRead,
+			Handler:     toolGetModelMeta,
+		},
+		{
+			Name:        "list_system_tasks",
+			Description: "List recent scheduled system tasks without payloads.",
+			InputSchema: toolSchema(map[string]any{
+				"limit": map[string]any{"type": "integer"},
+			}),
+			Permission: &authz.SystemTaskRead,
+			Handler:    toolListSystemTasks,
+		},
+		{
 			Name:        "list_hooks",
 			Description: "List system hooks and this agent's hooks.",
 			InputSchema: toolSchema(nil),
@@ -371,23 +591,44 @@ func ExecuteTool(ctx *ToolContext, name string, args map[string]any) (any, error
 		return nil, fmt.Errorf("hosting is not ready")
 	}
 	if !toolRate.Allow(ctx.Agent.Id) {
-		return nil, fmt.Errorf("tool rate limit exceeded")
+		err := fmt.Errorf("tool rate limit exceeded")
+		if ctx.FromRunner {
+			return nil, handoffErr("rate_limit", err.Error())
+		}
+		return nil, err
+	}
+	if !toolRate.AllowIncident(ctx.IncidentKey) {
+		err := fmt.Errorf("per-incident tool rate limit exceeded")
+		if ctx.FromRunner {
+			return nil, handoffErr("rate_limit", err.Error())
+		}
+		return nil, err
 	}
 	tool := toolByName(name)
 	if tool == nil {
 		return nil, fmt.Errorf("unknown tool %s", name)
 	}
 	if !toolAllowed(ctx, tool) {
-		return nil, fmt.Errorf("tool %s is not authorized", name)
+		err := fmt.Errorf("tool %s is not authorized", name)
+		if ctx.FromRunner {
+			return nil, handoffErr("unauthorized", err.Error())
+		}
+		return nil, err
 	}
 	if args == nil {
 		args = map[string]any{}
 	}
 	if err := protectBrainChannel(ctx, name, args); err != nil {
+		if ctx.FromRunner {
+			return nil, handoffErr("brain_channel", err.Error())
+		}
 		return nil, err
 	}
 	if ctx.Agent.DryRun && tool.Mutating && name != "handoff_incident" && name != "sleep_until_hook" {
 		if name != "manage_multi_keys" || (argString(args, "action") != "" && argString(args, "action") != "get_key_status") {
+			if ctx.FromRunner {
+				return nil, handoffErr("dry_run", "dry-run blocked mutating tool "+name)
+			}
 			return map[string]any{"dry_run": true, "tool": name, "args": args}, nil
 		}
 	}
@@ -515,4 +756,28 @@ func argBool(args map[string]any, key string) (bool, bool) {
 	}
 	b, ok := v.(bool)
 	return b, ok
+}
+
+func argFloat(args map[string]any, key string) float64 {
+	v, ok := args[key]
+	if !ok || v == nil {
+		return 0
+	}
+	switch n := v.(type) {
+	case float64:
+		return n
+	case int:
+		return float64(n)
+	case int64:
+		return float64(n)
+	case json.Number:
+		f, _ := n.Float64()
+		return f
+	case string:
+		var f float64
+		_, _ = fmt.Sscanf(n, "%f", &f)
+		return f
+	default:
+		return 0
+	}
 }

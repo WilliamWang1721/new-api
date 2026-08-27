@@ -135,6 +135,7 @@ type HostingIncident struct {
 	ContextJSON    string `json:"context_json" gorm:"type:text"`
 	ActionsJSON    string `json:"actions_json" gorm:"type:text"`
 	HandoffReason  string `json:"handoff_reason" gorm:"type:text"`
+	BrainSource    string `json:"brain_source" gorm:"type:varchar(32)"`
 	AssigneeUserId int    `json:"assignee_user_id"`
 	CreatedAt      int64  `json:"created_at"`
 	UpdatedAt      int64  `json:"updated_at"`
@@ -230,6 +231,14 @@ func ListHostingTokens(agentId int) ([]*HostingAgentToken, error) {
 	var tokens []*HostingAgentToken
 	err := DB.Where("agent_id = ?", agentId).Order("id desc").Find(&tokens).Error
 	return tokens, err
+}
+
+func GetHostingTokenById(id, agentId int) (*HostingAgentToken, error) {
+	var token HostingAgentToken
+	if err := DB.First(&token, "id = ? AND agent_id = ?", id, agentId).Error; err != nil {
+		return nil, err
+	}
+	return &token, nil
 }
 
 func (t *HostingAgentToken) Insert() error {

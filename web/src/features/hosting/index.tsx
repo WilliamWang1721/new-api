@@ -25,6 +25,7 @@ import { SectionPageLayout } from '@/components/layout'
 import { Alert, AlertDescription, AlertTitle } from '@/components/ui/alert'
 import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
+import { Input } from '@/components/ui/input'
 import {
   Card,
   CardContent,
@@ -44,14 +45,19 @@ import {
   createHostingAgent,
   createHostingAgentToken,
   deleteHostingAgent,
+  deleteHostingHook,
+  exportHostingSession,
   getHostingCost,
   getHostingPermissionCatalog,
   getHostingSession,
   getHostingStatus,
+  listHostingAgentTokens,
   listHostingAgents,
   listHostingHooks,
   listHostingIncidents,
+  rotateHostingAgentToken,
   rotateHostingSession,
+  setHostingPanelEnabled,
   updateHostingAgent,
   updateHostingHook,
   updateHostingIncident,
@@ -74,7 +80,13 @@ export function HostingPage() {
   const [form, setForm] = useState<HostingAgentForm>(EMPTY_HOSTING_AGENT_FORM)
   const [permissions, setPermissions] = useState<AdminPermissionMatrix>({})
   const [secret, setSecret] = useState('')
+  const [tokenAllowIps, setTokenAllowIps] = useState('')
   const [selectedAgentId, setSelectedAgentId] = useState<number | null>(null)
+  const tokensQuery = useQuery({
+    queryKey: ['hosting-tokens', selectedAgentId],
+    queryFn: () => listHostingAgentTokens(selectedAgentId as number),
+    enabled: selectedAgentId != null,
+  })
 
   const statusQuery = useQuery({
     queryKey: ['hosting-status'],
@@ -115,6 +127,11 @@ export function HostingPage() {
   const incidents = incidentsQuery.data?.data ?? []
   const hooks = hooksQuery.data?.data ?? []
   const hostingState = status?.state ?? 'disabled'
+  const envEnabled = status?.env_enabled !== false
+  const panelEnabled = status?.panel_enabled !== false
+  const sessionPayload = sessionQuery.data?.data
+  const sessionEntries = sessionPayload?.entries ?? []
+  const selectedAgent = agents.find((agent) => agent.id === selectedAgentId)
 
   const saveMutation = useMutation({
     mutationFn: async () => {
@@ -169,7 +186,27 @@ export function HostingPage() {
         </span>
       </SectionPageLayout.Title>
       <SectionPageLayout.Actions>
-        <Button onClick={openCreate}>{t('Create agent')}</Button>
+        <div className='flex items-center gap-3'>
+          <span className='text-muted-foreground text-sm'>
+            {t('Hosting enabled')}
+          </span>
+          <Switch
+            checked={panelEnabled && hostingState !== 'disabled'}
+            disabled={!envEnabled}
+            onCheckedChange={async (checked) => {
+              const res = await setHostingPanelEnabled(checked)
+              if (!res.success) {
+                toast.error(res.message || t('Failed to update hosting switch'))
+                return
+              }
+              queryClient.invalidateQueries({ queryKey: ['hosting-status'] })
+              toast.success(
+                checked ? t('Hosting enabled') : t('Hosting disabled')
+              )
+            }}
+          />
+          <Button onClick={openCreate}>{t('Create agent')}</Button>
+        </div>
       </SectionPageLayout.Actions>
       <SectionPageLayout.Content>
         <div className='space-y-4'>
@@ -201,6 +238,17 @@ export function HostingPage() {
             </Alert>
           ) : null}
 
+          <div className='grid gap-1'>
+            <span className='text-muted-foreground text-sm'>
+              {t('Token IP allowlist')}
+            </span>
+            <Input
+              value={tokenAllowIps}
+              placeholder={t('Optional comma-separated IPs or CIDRs')}
+              onChange={(event) => setTokenAllowIps(event.target.value)}
+            />
+          </div>
+
           <Card>
             <CardHeader>
               <CardTitle>{t('Runtime snapshot')}</CardTitle>
@@ -210,8 +258,21 @@ export function HostingPage() {
                 })}
               </CardDescription>
             </CardHeader>
-            <CardContent className='text-muted-foreground text-sm'>
-              {t('Hosting state')}: {hostingState}
+            <CardContent className='text-muted-foreground space-y-2 text-sm'>
+              <div>
+                {t('Hosting state')}: {hostingState}
+              </div>
+              <div>
+                {t('Inspection tasks')}:{' '}
+                {snapshot?.inspection_tasks
+                  ? Object.entries(snapshot.inspection_tasks)
+                      .map(([name, task]) => `${name}=${task.status}`)
+                      .join(', ') || t('None')
+                  : t('None')}
+              </div>
+              <div>
+                {t('Host memory')}: {snapshot?.host_resources?.alloc_mb ?? 0} MB
+              </div>
             </CardContent>
           </Card>
 
@@ -262,10 +323,14 @@ export function HostingPage() {
                           onClick={async () => {
                             const res = await createHostingAgentToken(agent.id, {
                               name: 'rotated',
+                              allow_ips: tokenAllowIps,
                             })
                             if (res.success && res.data.secret) {
                               setSecret(res.data.secret)
                               toast.success(t('Token created'))
+                              queryClient.invalidateQueries({
+                                queryKey: ['hosting-tokens', agent.id],
+                              })
                             } else {
                               toast.error(
                                 res.message || t('Failed to create token')
@@ -309,8 +374,17 @@ export function HostingPage() {
                         <Badge variant='outline'>{item.status}</Badge>
                         {item.summary}
                       </CardTitle>
-                      <CardDescription>{item.handoff_reason}</CardDescription>
+                      <CardDescription>
+                        {[item.source_event, item.brain_source, item.handoff_reason]
+                          .filter(Boolean)
+                          .join(' · ')}
+                      </CardDescription>
                     </CardHeader>
+                    {item.actions_json ? (
+                      <CardContent className='text-muted-foreground text-sm whitespace-pre-wrap'>
+                        {item.actions_json}
+                      </CardContent>
+                    ) : null}
                     <CardContent className='flex gap-2'>
                       <Button
                         size='sm'
@@ -356,6 +430,7 @@ export function HostingPage() {
                           {hook.owner} · {hook.kind} · {hook.wake_mode}
                         </CardDescription>
                       </div>
+                      <div className='flex items-center gap-2'>
                       <Switch
                         checked={hook.enabled}
                         onCheckedChange={async (checked) => {
@@ -365,6 +440,28 @@ export function HostingPage() {
                           })
                         }}
                       />
+                      {hook.owner !== 'system' ? (
+                        <Button
+                          variant='destructive'
+                          size='sm'
+                          onClick={async () => {
+                            const res = await deleteHostingHook(hook.id)
+                            if (res.success) {
+                              toast.success(t('Hook deleted'))
+                              queryClient.invalidateQueries({
+                                queryKey: ['hosting-hooks'],
+                              })
+                            } else {
+                              toast.error(
+                                res.message || t('Failed to delete hook')
+                              )
+                            }
+                          }}
+                        >
+                          {t('Delete')}
+                        </Button>
+                      ) : null}
+                      </div>
                     </CardHeader>
                   </Card>
                 ))
@@ -391,14 +488,95 @@ export function HostingPage() {
                     >
                       {t('Start new session')}
                     </Button>
+                    <Button
+                      variant='outline'
+                      size='sm'
+                      onClick={async () => {
+                        const res = await exportHostingSession(selectedAgentId)
+                        if (!res.success || !res.data?.export) {
+                          toast.error(
+                            res.message || t('Failed to export session')
+                          )
+                          return
+                        }
+                        const blob = new Blob([res.data.export], {
+                          type: 'application/json',
+                        })
+                        const url = URL.createObjectURL(blob)
+                        const link = document.createElement('a')
+                        link.href = url
+                        link.download = `hosting-session-${selectedAgentId}.json`
+                        link.click()
+                        URL.revokeObjectURL(url)
+                        toast.success(t('Session exported'))
+                      }}
+                    >
+                      {t('Export session')}
+                    </Button>
                     <span className='text-muted-foreground text-sm'>
                       {t('Today')}: {costQuery.data?.data?.tokens_used ?? 0}{' '}
                       {t('tokens')} / {costQuery.data?.data?.wakes ?? 0}{' '}
                       {t('wakes')}
                     </span>
                   </div>
+                  {(tokensQuery.data?.data ?? []).length > 0 ? (
+                    <Card>
+                      <CardHeader>
+                        <CardTitle>{t('Tokens')}</CardTitle>
+                      </CardHeader>
+                      <CardContent className='space-y-2'>
+                        {(tokensQuery.data?.data ?? []).map((token) => (
+                          <div
+                            key={token.id}
+                            className='flex flex-wrap items-center justify-between gap-2 text-sm'
+                          >
+                            <span>
+                              {token.name || t('Token')} · {token.token_prefix}{' '}
+                              · {token.allow_ips || t('Any IP')}
+                            </span>
+                            <Button
+                              variant='outline'
+                              size='sm'
+                              onClick={async () => {
+                                const res = await rotateHostingAgentToken(
+                                  selectedAgentId,
+                                  token.id,
+                                  { allow_ips: tokenAllowIps || token.allow_ips }
+                                )
+                                if (res.success && res.data.secret) {
+                                  setSecret(res.data.secret)
+                                  toast.success(t('Token rotated'))
+                                  queryClient.invalidateQueries({
+                                    queryKey: ['hosting-tokens', selectedAgentId],
+                                  })
+                                } else {
+                                  toast.error(
+                                    res.message || t('Failed to rotate token')
+                                  )
+                                }
+                              }}
+                            >
+                              {t('Rotate token')}
+                            </Button>
+                          </div>
+                        ))}
+                      </CardContent>
+                    </Card>
+                  ) : null}
+                  {sessionPayload?.last_compact_summary ||
+                  selectedAgent?.last_compact_summary ? (
+                    <Card>
+                      <CardHeader>
+                        <CardTitle>{t('Last compaction summary')}</CardTitle>
+                      </CardHeader>
+                      <CardContent className='whitespace-pre-wrap text-sm'>
+                        {sessionPayload?.last_compact_summary ||
+                          selectedAgent?.last_compact_summary}
+                      </CardContent>
+                    </Card>
+                  ) : null}
                   <div className='space-y-2'>
-                    {(sessionQuery.data?.data ?? []).map((entry) => (
+                    {sessionEntries.map((entry) => (
                       <Card key={entry.id} size='sm'>
                         <CardHeader>
                           <CardTitle className='text-sm'>
